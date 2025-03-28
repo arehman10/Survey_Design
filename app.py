@@ -435,7 +435,7 @@ def main():
    # st.title("Sampling Optimization + Slack Diagnostics")
 
     all_solvers_list = [
-        "SCIP", "ECOS_BB"
+        "SCIP",  "ECOS_BB"
     ]
 
     st.write("""
