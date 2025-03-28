@@ -337,7 +337,7 @@ def run_optimization(df_wide,
     # NEW: List of all solvers
     ###########################################################################
     all_solvers = [
-        "ECOS_BB","GUROBI", "MOSEK", "OSQP", "PDLP", "SCIP"
+        "ECOS_BB","GUROBI", "SCIP"
     ]
 
     # If the user-chosen solver is in the list, we prioritize that solver first,
@@ -395,7 +395,7 @@ def main():
 
 
     all_solvers_list = [
-       "ECOS_BB","GUROBI", "MOSEK", "OSQP", "PDLP", "SCIP"
+      "ECOS_BB","GUROBI", "SCIP"
     ]
 
     
