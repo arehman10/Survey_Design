@@ -4,3 +4,10 @@ numpy
 cvxpy
 swiglpk
 matplotlib.colors
+coinor-cbc
+glpk-utils
+libglpk-dev
+cylp
+pyscipopt
+gurobipy
+pyomo
