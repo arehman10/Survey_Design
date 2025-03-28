@@ -29,12 +29,6 @@ def compute_fpc_min(N, n_infinity):
 
 
 def create_combined_table_with_totals(df_long):
-    """
-    Takes df_long with columns:
-      [Region, Size, Industry, OptimizedSample, BaseWeight, Population, PropSample]
-    and builds a single pivot table with (Industry_Sample, Industry_BaseWeight)
-    plus a final "GrandTotal" row.
-    """
     size_order = df_long['Size'].drop_duplicates().tolist()
     df_long['Size'] = pd.Categorical(df_long['Size'], categories=size_order, ordered=True)
 
@@ -117,7 +111,7 @@ def write_excel_combined_table(df_combined, pivot_population, pivot_propsample):
 
 
 ###############################################################################
-# 2) PRE-CHECK (SINGLE-CONSTRAINT) & DIAGNOSTICS
+# 2) PRE-CHECK
 ###############################################################################
 
 def detailed_feasibility_check(df_long,
@@ -129,9 +123,13 @@ def detailed_feasibility_check(df_long,
                                dimension_mins):
     """
     1) For each cell, compute feasible_max. If minCell>feasible_max => immediate conflict.
-    2) sum(feasible_max) vs total_sample.
-    3) dimension min vs sum(feasible_max in that dimension).
-    Returns 3 DataFrames: overall_conflicts, cell_conflicts, dimension_conflicts
+    2) sum(feasible_max) vs total_sample => overall_conflict
+    3) dimension min vs sum(feasible_max in that dimension) => dimension_conflict
+
+    Returns:
+      df_overall (with any total-sample conflict),
+      df_cells   (with cell-level conflicts),
+      df_dims    (with dimension-level conflicts).
     """
 
     n_cells = len(df_long)
@@ -164,7 +162,7 @@ def detailed_feasibility_check(df_long,
                 "LowerBound": lb,
                 "FeasibleMax": fmax,
                 "ShortBy": lb - fmax,
-                "Reason":"Cell min> feasible max"
+                "Reason":"Cell min > feasible max"
             })
         feasible_max_by_i.append(fmax)
         lower_bound_by_i.append(lb)
@@ -197,7 +195,7 @@ def detailed_feasibility_check(df_long,
                         "RequiredMin": req_min,
                         "SumFeasibleMax": sub_fmax,
                         "ShortBy": req_min - sub_fmax,
-                        "Reason":"Dimension min> sum feasible"
+                        "Reason":"Dimension min > sum feasible"
                     })
 
     return (
@@ -207,6 +205,9 @@ def detailed_feasibility_check(df_long,
     )
 
 
+###############################################################################
+# 3) SLACK-BASED DIAGNOSTIC FOR COMBINED CONFLICT
+###############################################################################
 def diagnose_infeasibility_slacks(df_long,
                                   total_sample,
                                   min_cell_size,
@@ -216,10 +217,10 @@ def diagnose_infeasibility_slacks(df_long,
                                   conversion_rate):
     """
     Build a 'slack-based' model: minimize total slack across constraints.
-    We use continuous x for diagnosing. We'll see which constraints are violated
-    and by how much (the slack).
+    We use continuous x for diagnosing. We'll see which constraints are collectively
+    violated and by how much (the slack).
     Returns:
-      - df_long_slack (with x_i in SlackSolution_x),
+      - df_slack_sol (with x_i in SlackSolution_x),
       - df_slack_usage (which constraints needed slack),
       - problem.status
     """
@@ -229,13 +230,9 @@ def diagnose_infeasibility_slacks(df_long,
 
     # Slack for total sample:
     s_tot = cp.Variable(nonneg=True, name="slack_totSample")
-    # So sum(x)+ s_tot == total_sample
-    # If s_tot>0 => we couldn't reach total_sample fully.
-
     constraints = []
     constraints.append( cp.sum(x) + s_tot == total_sample )
 
-    # We'll add dimension-based slack for dimension min
     dimension_slacks = {}
     dim_indices = {"Region": {}, "Size":{}, "Industry":{}}
     for dt in dim_indices:
@@ -251,31 +248,23 @@ def diagnose_infeasibility_slacks(df_long,
                 idx_list = dim_indices[dt][val]
                 constraints.append( cp.sum(x[idx_list]) + sd >= req_min )
 
-    # We'll add cell-level min constraints with slack if you want to see how short each cell is
-    # e.g. x[i] + s_cell_i >= lb[i]. Also handle upper bounds with a second slack if you want.
     cell_slacks = []
     for i in range(n_cells):
         pop_i = df_long.loc[i,"Population"]
         conv_ub = math.ceil(pop_i*conversion_rate)
-        feasible_max = min(pop_i, max_cell_size, conv_ub)
+        fmax = min(pop_i, max_cell_size, conv_ub)
         lb_bw = pop_i/max_base_weight
-        if feasible_max>= min_cell_size and pop_i>0:
+        if fmax>= min_cell_size and pop_i>0:
             lb = max(lb_bw, min_cell_size, 0)
         else:
             lb = max(lb_bw, 0)
 
-        # x[i] + s_cell >= lb
         s_cell = cp.Variable(nonneg=True, name=f"cellSlack_{i}")
         cell_slacks.append(s_cell)
         constraints.append( x[i] + s_cell >= lb )
 
-        # we won't enforce an upper bound as a hard constraint in the slack model,
-        # or we'd need a second slack. Typically dimension min is the main reason for shortfall.
-
-    # sum of all slacks in objective
     slack_vars = [s_tot] + list(dimension_slacks.values()) + cell_slacks
     obj = cp.Minimize( cp.sum(slack_vars) )
-
     problem = cp.Problem(obj, constraints)
 
     try:
@@ -290,7 +279,6 @@ def diagnose_infeasibility_slacks(df_long,
     df_slack_sol = df_long.copy()
     df_slack_sol["SlackSolution_x"] = x_sol
 
-    # gather slack usage
     slack_usage = []
     if s_tot.value>1e-8:
         slack_usage.append({
@@ -323,7 +311,7 @@ def diagnose_infeasibility_slacks(df_long,
 
 
 ###############################################################################
-# 3) MAIN SOLVER FUNCTION
+# 4) MAIN SOLVER FUNCTION
 ###############################################################################
 def run_optimization(
     df_wide,
@@ -359,15 +347,8 @@ def run_optimization(
         df_long, total_sample, min_cell_size, max_cell_size, max_base_weight, conversion_rate, dimension_mins
     )
     if (not df_overall.empty) or (not df_cells.empty) or (not df_dims.empty):
-        msg = "Feasibility conflicts found:\n"
-        if not df_overall.empty:
-            msg += "\n**Overall conflicts**:\n"+df_overall.to_string(index=False)+"\n"
-        if not df_dims.empty:
-            msg += "\n**Dimension conflicts**:\n"+df_dims.to_string(index=False)+"\n"
-        if not df_cells.empty:
-            msg += "\n**Cell conflicts**:\n"+df_cells.to_string(index=False)+"\n"
-
-        return None, df_cells, df_dims, msg  # skip the solver entirely
+        # return them so we can display them in nice tables
+        return None, df_cells, df_dims, df_overall  # skip the solver
 
     # 3) Build the CVXPY MIP
     x = cp.Variable(n_cells, integer=True)
@@ -405,7 +386,7 @@ def run_optimization(
 
     # 4) Try all solvers
     all_solvers = [
-        "SCIP","ECOS_BB"
+        "SCIP", "ECOS_BB"
     ]
     if solver_choice in all_solvers:
         chosen_solvers = [solver_choice]+ [s for s in all_solvers if s!= solver_choice]
@@ -427,7 +408,7 @@ def run_optimization(
             last_error= e
 
     if not solution_found:
-        # MIP said "No feasible solution." Let's do the slack approach to see combined conflict
+        # MIP said "No feasible solution." We'll do the slack approach to see combined conflict
         raise ValueError(
             f"No solver found a feasible solution among {chosen_solvers}. Last error was: {last_error}"
         )
@@ -441,25 +422,29 @@ def run_optimization(
         else:
             return np.nan
     df_long["BaseWeight"] = df_long.apply(basew, axis=1)
-    return df_long, df_cells, df_dims, solver_that_succeeded
+    return df_long, None, None, solver_that_succeeded
 
 
 ###############################################################################
-# 4) STREAMLIT FRONT-END
+# 5) STREAMLIT FRONT-END
 ###############################################################################
 def main():
     title_placeholder = st.empty()
     title_placeholder.title("Survey Design")
 
-
-    st.write("""
-    1. We'll do single-constraint checks. 
-    2. If solver fails => run a 'slack-based' diagnostic to see which constraints are collectively short. 
-    """)
+   # st.title("Sampling Optimization + Slack Diagnostics")
 
     all_solvers_list = [
-        "SCIP",  "ECOS_BB"
+        "SCIP", "ECOS_BB"
     ]
+
+    st.write("""
+    **Flow**:
+    1. Check single-constraint feasibility. If there's a direct conflict, show 
+       the Overall, Cell, and Dimension conflicts as tables.
+    2. If still we fail at the solver => run a slack-based diagnostic 
+       to see combined conflict.
+    """)
 
     st.sidebar.header("Parameters")
     total_sample = st.sidebar.number_input("Total Sample", value=1000)
@@ -498,26 +483,27 @@ def main():
             st.error("Cannot read Sheet1 from that file.")
             return
 
-        # dimension sets
+        # set dynamic dimension mins
         all_regions= df_wide["Region"].dropna().unique()
         all_sizes  = df_wide["Size"].dropna().unique()
-        data_ind_cols= [c for c in df_wide.columns if c not in ["Region","Size"]]
-        all_inds= data_ind_cols
+        data_cols = [c for c in df_wide.columns if c not in ["Region","Size"]]
+        all_inds= data_cols
 
         n_infinity= compute_n_infinity(z_score, margin_of_error, p)
 
         def sum_pop_in_dim(df, dim_type, val):
             if dim_type in ["Region","Size"]:
-                subset = df[df[dim_type]== val]
-                total=0
-                for c in data_ind_cols:
-                    total+= subset[c].fillna(0).sum()
-                return total
+                subset= df[df[dim_type]== val]
+                tot=0
+                for c in data_cols:
+                    tot+= subset[c].fillna(0).sum()
+                return tot
             else:
+                # industry dimension => col
                 return df[val].fillna(0).sum()
 
         with st.sidebar.expander("Dimension Minimum Overrides", expanded=True):
-            st.write("Default from sample-size formula, can override:")
+            st.write("Default from sample-size formula, can override if you want.")
             st.markdown("**By Region**")
             for r in all_regions:
                 pop_ = sum_pop_in_dim(df_wide,"Region", r)
@@ -528,77 +514,68 @@ def main():
             st.markdown("**By Size**")
             for sz in all_sizes:
                 pop_ = sum_pop_in_dim(df_wide,"Size", sz)
-                defMin = compute_fpc_min(pop_, n_infinity)
+                defMin= compute_fpc_min(pop_, n_infinity)
                 user_val= st.number_input(f"Min sample for Size={sz}", min_value=0, value=int(round(defMin)), step=1)
                 dimension_mins["Size"][sz]= user_val
 
             st.markdown("**By Industry**")
             for ind_ in all_inds:
                 pop_ = sum_pop_in_dim(df_wide,"Industry", ind_)
-                defMin = compute_fpc_min(pop_, n_infinity)
+                defMin= compute_fpc_min(pop_, n_infinity)
                 user_val= st.number_input(f"Min sample for Industry={ind_}", min_value=0, value=int(round(defMin)), step=1)
                 dimension_mins["Industry"][ind_]= user_val
 
         if st.button("Run Optimization"):
             try:
-                (df_long_final, df_cell_warn, df_dim_conf, solverinfo) = run_optimization(
-                    df_wide,
-                    total_sample,
-                    min_cell_size,
-                    max_cell_size,
-                    max_base_weight,
-                    solver_choice,
-                    dimension_mins,
-                    conversion_rate
+                df_long_final, df_cell_conf, df_dim_conf, solver_info = run_optimization(
+                    df_wide=df_wide,
+                    total_sample=total_sample,
+                    min_cell_size=min_cell_size,
+                    max_cell_size=max_cell_size,
+                    max_base_weight=max_base_weight,
+                    solver_choice=solver_choice,
+                    dimension_mins=dimension_mins,
+                    conversion_rate=conversion_rate
                 )
 
                 if df_long_final is None:
-                    # That means single-constraint conflict was found
-                    st.error("Single-constraint conflict(s):")
-                    st.write(solverinfo)
+                    # Means single-constraint conflict(s)
+                    st.error("Single-constraint conflict(s) found. See tables below.")
+                    df_overall = solver_info  # we stored them in 'solver_info'? Actually we returned them in that place, so let's handle it properly
+
+                    # Actually we returned: 
+                    # return None, df_cells, df_dims, df_overall
+                    # so 'df_cell_conf' => cell conflicts, 'df_dim_conf' => dimension conflicts, 'solver_info' => overall conflicts
+                    df_overall = solver_info
+
+                    if not df_overall.empty:
+                        st.subheader("Overall Conflicts")
+                        st.dataframe(df_overall)
+                    if not df_dim_conf.empty:
+                        st.subheader("Dimension Conflicts")
+                        st.dataframe(df_dim_conf)
+                    if not df_cell_conf.empty:
+                        st.subheader("Cell Conflicts")
+                        st.dataframe(df_cell_conf)
+
                 else:
-                    # We got a solution
-                    if isinstance(solverinfo, str):
-                        st.success(f"Solver found a feasible solution with {solverinfo}.")
+                    # We got a feasible solution
+                    if isinstance(solver_info, str):
+                        st.success(f"Solved with solver={solver_info}")
                     else:
-                        st.success("Solver found a feasible solution but no solver name returned?")
+                        st.success("Solved with an unknown solver?")
 
+                    # Make pivot
                     df_combined = create_combined_table_with_totals(df_long_final)
-                    pivot_pop = df_long_final.pivot_table(
-                        index=["Region","Size"], columns="Industry", values="Population", aggfunc='sum'
-                    )
-                    pivot_prop = df_long_final.pivot_table(
-                        index=["Region","Size"], columns="Industry", values="PropSample", aggfunc='mean'
-                    )
+                    pivot_pop = df_long_final.pivot_table(index=["Region","Size"], columns="Industry", values="Population", aggfunc='sum')
+                    pivot_prop= df_long_final.pivot_table(index=["Region","Size"], columns="Industry", values="PropSample", aggfunc='mean')
 
-                    subset_bw_cols = [c for c in df_combined.columns if c.endswith("_BaseWeight")]
-                    norm_bw_cols = [c for c in subset_bw_cols if c!="GrandTotal_BaseWeight"]
-                    norm_df = df_combined.iloc[:-1]
-                    if not norm_df[norm_bw_cols].empty:
-                        global_min = norm_df[norm_bw_cols].min().min()
-                        global_max = norm_df[norm_bw_cols].max().max()
-                        global_mid = np.percentile(norm_df[norm_bw_cols].stack(),50)
-                    else:
-                        global_min=0
-                        global_mid=0
-                        global_max=0
-                    custom_cmap = LinearSegmentedColormap.from_list("custom", ["#00FF00","#FFFF00","#FF0000"])
-                    norm_obj = TwoSlopeNorm(vmin=global_min,vcenter=global_mid,vmax=global_max)
-                    def baseweight_color(v):
-                        val = norm_obj(v)
-                        color= mcolors.to_hex(custom_cmap(val))
-                        return f'background-color: {color}'
-                    def style_bwcol(series):
-                        n=len(series)
-                        return [baseweight_color(val) if i<n-1 else "" for i,val in enumerate(series)]
+                    st.subheader("Combined Table with GrandTotal row")
+                    st.dataframe(df_combined)
 
-                    stcol= df_combined.style.apply(style_bwcol, subset=norm_bw_cols)
-                    st.dataframe(stcol)
-                    st.subheader("Population & Proportional")
-                    st.dataframe(pivot_pop)
-                    st.dataframe(pivot_prop)
+                    # (Optional color logic)...
 
-                    excel_data = write_excel_combined_table(df_combined, pivot_pop, pivot_prop)
+                    excel_data= write_excel_combined_table(df_combined, pivot_pop, pivot_prop)
                     st.download_button(
                         label="Download Excel",
                         data=excel_data,
@@ -610,18 +587,15 @@ def main():
                 # This is the combined conflict from MIP solver
                 st.error(f"{e}")
                 if "No solver found a feasible solution" in str(e):
-                    st.warning("Running slack-based diagnostic for combined infeasibility. Please wait...")
+                    st.warning("Now running slack-based diagnostic for combined infeasibility...")
 
                     # do slack approach
                     try:
                         # Rebuild df_long
-                        identifier_cols=["Region","Size"]
-                        dcols= [c for c in df_wide.columns if c not in identifier_cols]
-                        df_long = df_wide.melt(
-                            id_vars=identifier_cols, value_vars=dcols,
-                            var_name="Industry", value_name="Population"
-                        ).reset_index(drop=True)
-                        df_long["Population"] = df_long["Population"].fillna(0)
+                        ident_cols= ["Region","Size"]
+                        dcols= [c for c in df_wide.columns if c not in ident_cols]
+                        df_long= df_wide.melt(id_vars=ident_cols, value_vars=dcols, var_name="Industry", value_name="Population").reset_index(drop=True)
+                        df_long["Population"]= df_long["Population"].fillna(0)
                         diag_sol, diag_usage, diag_status = diagnose_infeasibility_slacks(
                             df_long,
                             total_sample,
@@ -632,21 +606,22 @@ def main():
                             conversion_rate
                         )
                         if diag_sol is None:
-                            st.error(f"Slack-based diagnostic also failed: {diag_status}")
+                            st.error(f"Slack diagnostic also failed => {diag_status}")
                         else:
-                            st.subheader("Slack-based Partial Solution")
+                            st.subheader("Slack-based partial solution (continuous)")
                             st.dataframe(diag_sol)
+
                             if diag_usage.empty:
-                                st.info("No slack needed => possibly it's integer constraints causing trouble. The continuous relaxation is feasible.")
+                                st.info("No slack needed => Possibly the integer constraints cause no solution. The continuous relaxation is feasible.")
                             else:
-                                st.warning("Here are the constraints that needed slack:")
+                                st.warning("Constraints that needed slack:")
                                 st.dataframe(diag_usage)
 
                     except Exception as e2:
-                        st.error(f"Diagnostic error: {e2}")
+                        st.error(f"Slack-based diagnostic error: {e2}")
 
-            except Exception as e:
-                st.error(f"Solver Error: {e}")
+            except Exception as e2:
+                st.error(f"Solver Error: {e2}")
     else:
         st.warning("Please upload an Excel file first.")
 
