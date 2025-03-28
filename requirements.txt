@@ -4,4 +4,3 @@ numpy
 cvxpy
 swiglpk
 matplotlib.colors
-GUROBI
