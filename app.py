@@ -385,8 +385,8 @@ def run_optimization(
     problem = cp.Problem(objective, constraints)
 
     # 4) Try all solvers
-    all_solvers_list = [
-        "SCIP","ECOS_BB"
+    all_solvers = [
+        "SCIP", "ECOS_BB"
     ]
     if solver_choice in all_solvers:
         chosen_solvers = [solver_choice]+ [s for s in all_solvers if s!= solver_choice]
@@ -435,7 +435,7 @@ def main():
    # st.title("Sampling Optimization + Slack Diagnostics")
 
     all_solvers_list = [
-        "SCIP","ECOS_BB"
+        "SCIP",  "ECOS_BB"
     ]
 
     st.write("""
