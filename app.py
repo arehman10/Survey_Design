@@ -385,8 +385,8 @@ def run_optimization(
     problem = cp.Problem(objective, constraints)
 
     # 4) Try all solvers
-    all_solvers = [
-        "SCIP", "ECOS_BB"
+    all_solvers_list = [
+        "SCIP","ECOS_BB"
     ]
     if solver_choice in all_solvers:
         chosen_solvers = [solver_choice]+ [s for s in all_solvers if s!= solver_choice]
@@ -435,7 +435,7 @@ def main():
    # st.title("Sampling Optimization + Slack Diagnostics")
 
     all_solvers_list = [
-        "SCIP",  "ECOS_BB"
+        "SCIP","ECOS_BB"
     ]
 
     st.write("""
@@ -570,10 +570,39 @@ def main():
                     pivot_pop = df_long_final.pivot_table(index=["Region","Size"], columns="Industry", values="Population", aggfunc='sum')
                     pivot_prop= df_long_final.pivot_table(index=["Region","Size"], columns="Industry", values="PropSample", aggfunc='mean')
 
-                    st.subheader("Combined Table with GrandTotal row")
-                    st.dataframe(df_combined)
+                    st.subheader("Allocated Sample & Base Weights")
+                  #  st.dataframe(df_combined)
 
-                    # (Optional color logic)...
+                    subset_bw_cols = [c for c in df_combined.columns if c.endswith("_BaseWeight")]
+                    norm_bw_cols = [c for c in subset_bw_cols if c!="GrandTotal_BaseWeight"]
+                    norm_df = df_combined.iloc[:-1]
+                    if not norm_df[norm_bw_cols].empty:
+                        global_min = norm_df[norm_bw_cols].min().min()
+                        global_max = norm_df[norm_bw_cols].max().max()
+                        global_mid = np.percentile(norm_df[norm_bw_cols].stack(),50)
+                    else:
+                        global_min=0
+                        global_mid=0
+                        global_max=0
+                    custom_cmap = LinearSegmentedColormap.from_list("custom", ["#00FF00","#FFFF00","#FF0000"])
+                    norm_obj = TwoSlopeNorm(vmin=global_min,vcenter=global_mid,vmax=global_max)
+                    def baseweight_color(v):
+                        val = norm_obj(v)
+                        color= mcolors.to_hex(custom_cmap(val))
+                        return f'background-color: {color}'
+                    def style_bwcol(series):
+                        n=len(series)
+                        return [baseweight_color(val) if i<n-1 else "" for i,val in enumerate(series)]
+
+                    stcol= df_combined.style.apply(style_bwcol, subset=norm_bw_cols)
+                    st.dataframe(stcol)
+                    st.subheader("Population & Proportional")
+                    with st.expander("Population Table"):
+                        st.dataframe(pivot_pop)
+
+                    with st.expander("Proportional Sample Table"):
+                        st.dataframe(pivot_prop)
+
 
                     excel_data= write_excel_combined_table(df_combined, pivot_pop, pivot_prop)
                     st.download_button(
