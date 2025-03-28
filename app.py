@@ -448,7 +448,9 @@ def run_optimization(
 # 4) STREAMLIT FRONT-END
 ###############################################################################
 def main():
-    st.title("Sampling Optimization + Slack Diagnostics")
+    title_placeholder = st.empty()
+    title_placeholder.title("Survey Design")
+
 
     st.write("""
     1. We'll do single-constraint checks. 
@@ -482,6 +484,14 @@ def main():
     }
 
     if uploaded_file is not None:
+        # Update the title based on the file name
+        base_filename = uploaded_file.name.rsplit('.', 1)[0]
+        if "_" in base_filename:
+            parts = base_filename.split("_", 1)
+            display_title = f"{parts[0]} for {parts[1]}"
+        else:
+            display_title = base_filename
+        title_placeholder.title(display_title)
         try:
             df_wide= pd.read_excel(uploaded_file, sheet_name="Sheet1")
         except:
