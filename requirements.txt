@@ -4,3 +4,4 @@ numpy
 cvxpy
 swiglpk
 matplotlib.colors
+XPRESS
