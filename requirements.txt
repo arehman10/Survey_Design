@@ -3,7 +3,4 @@ openpyxl
 numpy
 cvxpy
 swiglpk
-streamlit
-math
-io
 matplotlib.colors
