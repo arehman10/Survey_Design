@@ -132,7 +132,7 @@ $$
 $$
 
 Since 
-$$\sum_{i=1}^n p_i = \text{total\_sample},$$ 
+$$\sum_{i=1}^n p_i = \text{total sample},$$ 
 the constraint 
 $$\sum_{i=1}^n x_i = \sum_{i=1}^n p_i$$ 
 is automatically satisfied by choosing \(x_i = p_i\). That is the global minimum, giving an objective of 0.
@@ -153,7 +153,7 @@ Once we impose the integer requirement (plus additional bounds), we must use a *
 The code transforms your wide-format data (e.g., columns for each Industry, plus Region/Size identifiers) into a long format where each row is a \((\text{Region}, \text{Size}, \text{Industry}, \text{Population})\) tuple.
 
 ### Proportional Targets
-For each cell \(i\), it computes the proportional target \(p_i\) based on population shares and `total_sample`.
+For each cell $$\(i\)$$, it computes the proportional target $$\(p_i\)$$ based on population shares and `total_sample`.
 
 ### Feasibility Checks
 The function **`detailed_feasibility_check`** verifies if it's possible to meet:
@@ -165,9 +165,9 @@ The function **`detailed_feasibility_check`** verifies if it's possible to meet:
 - Conversion rate limits
 
 ### Formulating the MIP
-1. Declares integer decision variables \(x_i\).
-2. Minimizes \(\sum (x_i - p_i)^2\).
-3. Constrains \(\sum x_i = \text{total\_sample}\).
+1. Declares integer decision variables $$\(x_i\)$$.
+2. Minimizes $$\(\sum (x_i - p_i)^2\)$$.
+3. Constrains $$\(\sum x_i = \text{total\_sample}\)$$.
 4. Imposes lower and upper bounds for each cell.
 5. Applies dimension-wise minimums if given.
 
@@ -176,7 +176,7 @@ The function **`detailed_feasibility_check`** verifies if it's possible to meet:
 - If no feasible solution is found, a slack-based diagnostic helps identify which constraints are violated.
 
 ### Outputs
-On success, returns the integer \(x_i\) and computes the corresponding base weight \(\tfrac{\text{Population}_i}{x_i}\) (if \(x_i > 0\)).
+On success, returns the integer $$\(x_i\)$$ and computes the corresponding base weight $$\(\tfrac{\text{Population}_i}{x_i}\) (if \(x_i > 0\))$$.
 
 ---
 
@@ -188,6 +188,6 @@ The code uses [CVXPY](https://www.cvxpy.org/) to model the **mixed-integer quadr
 - **Solver Backend**: 
   - **SCIP**: A well-known solver for mixed-integer optimization problems.  
   - **ECOS\_BB**: A branch-and-bound variant of the ECOS solver that supports integer constraints.
-- **Result**: The solver attempts to find a feasible solution that minimizes \(\sum (x_i - p_i)^2\). If infeasible, the code can diagnose which constraints cause the conflict.
+- **Result**: The solver attempts to find a feasible solution that minimizes $$\(\sum (x_i - p_i)^2\)$$. If infeasible, the code can diagnose which constraints cause the conflict.
 
 **Happy Optimizing!**
