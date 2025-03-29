@@ -3,11 +3,11 @@
 ## 1.1 Decision Variables
 
 Let there be \(n\) cells. Each cell \(i\) (for \(i = 1,\dots,n\)) corresponds to a combination of Region, Size, and Industry in the data. The decision variable is:
-
+'''
 \[
 x_i \quad \text{(the sample size chosen for cell } i\text{)}.
 \]
-
+'''
 ## 1.2 Objective Function
 
 The code seeks to minimize the deviation between \(x_i\) and a “proportional” target \(p_i\). 
