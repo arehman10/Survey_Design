@@ -167,7 +167,7 @@ The function **`detailed_feasibility_check`** verifies if it's possible to meet:
 ### Formulating the MIP
 1. Declares integer decision variables $$\(x_i\)$$.
 2. Minimizes $$\(\sum (x_i - p_i)^2\)$$.
-3. Constrains $$\(\sum x_i = \text{total\_sample}\)$$.
+3. Constrains $$\(\sum x_i = \text{total sample}\)$$.
 4. Imposes lower and upper bounds for each cell.
 5. Applies dimension-wise minimums if given.
 
