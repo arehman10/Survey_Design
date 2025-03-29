@@ -1,13 +1,13 @@
-# Explaination of the Survey Design App
+# 1. Pen-and-Paper Formulation
 
 ## 1.1 Decision Variables
 
 Let there be \(n\) cells. Each cell \(i\) (for \(i = 1,\dots,n\)) corresponds to a combination of Region, Size, and Industry in the data. The decision variable is:
-'''
+
 \[
-x_i \quad \text{(the sample size chosen for cell } i\text{)}.
+x_i \quad (\text{the sample size chosen for cell } i).
 \]
-'''
+
 ## 1.2 Objective Function
 
 The code seeks to minimize the deviation between \(x_i\) and a “proportional” target \(p_i\). 
@@ -48,7 +48,7 @@ Each cell \(i\) has:
 
 - **An upper bound**:
   \[
-  x_i \;\le\; \min\Bigl(\text{Population}_i,\;\text{max\_cell\_size},\;\lceil \text{Population}_i \times \text{conversion\_rate}\rceil\Bigr).
+  x_i \;\le\; \min\Bigl(\text{Population}_i,\;\text{max\_cell\_size},\;\lceil \text{Population}_i \times \text{conversion\_rate} \rceil\Bigr).
   \]
   This ensures the sample drawn for a cell does not exceed realistic or user-imposed limits.
 
@@ -56,7 +56,7 @@ Each cell \(i\) has:
 
 For a given dimension (e.g., Region, Size, or Industry), let’s say for Region \(r\), we require:
 \[
-\sum_{i \in\,\text{cells for region }r} x_i \;\ge\;\text{dimension\_mins}[\text{Region}][r].
+\sum_{i \in \,\text{cells for region }r} x_i \;\ge\;\text{dimension\_mins}[\text{Region}][r].
 \]
 The code generalizes this to any specified dimension (Region, Size, or Industry).
 
@@ -70,17 +70,22 @@ x_i \in \mathbb{Z}_{\ge 0}\quad (\text{each } x_i \text{ is a non-negative integ
 
 In mathematical form:
 
-\[
+$$
 \begin{aligned}
-&\text{Minimize} && \sum_{i=1}^{n} (x_i - p_i)^2 \\[6pt]
+&\text{Minimize} 
+  && \sum_{i=1}^{n} (x_i - p_i)^2 \\[6pt]
 &\text{subject to} \\[-1pt]
 & \sum_{i=1}^{n} x_i = \text{total\_sample}, \\[6pt]
-& x_i \;\ge\; \max\left(\frac{\text{Pop}_i}{\text{max\_base\_weight}},\;\text{min\_cell\_size},\;0\right), \quad \forall i, \\[6pt]
-& x_i \;\le\; \min\left(\text{Pop}_i,\;\text{max\_cell\_size},\;\left\lceil \text{Pop}_i \times \text{conversion\_rate}\right\rceil\right), \quad \forall i, \\[6pt]
-& \sum_{i \in D(r)} x_i \;\ge\; \text{dimension\_mins}[D][r], \quad \forall \text{dimension }D,\;\forall \text{value }r,\\[6pt]
-& x_i \in \mathbb{Z}_{\ge 0}, \quad \forall i.
+& x_i \;\ge\; \max\!\Bigl(\tfrac{\text{Pop}_i}{\text{max\_base\_weight}},\;\text{min\_cell\_size},\;0\Bigr), 
+  && \quad \forall i, \\[6pt]
+& x_i \;\le\; \min\!\Bigl(\text{Pop}_i,\;\text{max\_cell\_size},\;\lceil \text{Pop}_i \times \text{conversion\_rate}\rceil\Bigr),
+  && \quad \forall i, \\[6pt]
+& \sum_{i \in D(r)} x_i \;\ge\; \text{dimension\_mins}[D][r],
+  && \quad \forall \text{dimension }D,\;\forall \text{value }r,\\[6pt]
+& x_i \in \mathbb{Z}_{\ge 0},
+  && \quad \forall i.
 \end{aligned}
-\]
+$$
 
 ---
 
@@ -117,56 +122,45 @@ Once we impose the integer requirement (plus additional bounds), we must use a *
 
 # 3. Step-by-Step Code Explanation
 
-Below is a high-level explanation of how the code works (referring to the main solver function and related helpers):
-
 1. **Data Reshaping**  
-   - The code transforms your wide-format data (e.g., columns for each Industry, plus Region/Size identifiers) into a long format where each row is a (Region, Size, Industry) tuple with an associated population.
+   The code transforms your wide-format data (e.g., columns for each Industry, plus Region/Size identifiers) into a long format where each row is a `(Region, Size, Industry, Population)` tuple.
 
 2. **Proportional Targets**  
-   - For each cell \(i\), it computes a proportional target \(p_i\) based on population shares and the desired total sample size.
+   For each cell \(i\), it computes the proportional target \(p_i\) based on population shares and `total_sample`.
 
 3. **Feasibility Checks**  
-   - A function (`detailed_feasibility_check`) verifies if it’s even possible to meet certain requirements:
-     - Minimum cell sizes,
-     - Maximum cell sizes,
-     - Maximum base weight constraints,
-     - Dimension-wise minimums,
-     - Conversion rate limits.
-   - If these constraints are collectively impossible, it reports the conflicts.
+   The function `detailed_feasibility_check` verifies if it's possible to meet:
+   - Minimum cell sizes,
+   - Maximum cell sizes,
+   - Maximum base weight constraints,
+   - Dimension-wise minimums,
+   - Conversion rate limits.
 
 4. **Formulating the MIP**  
-   - Defines integer decision variables \(x_i\) for each cell.
+   - Declares integer decision variables \(x_i\).
    - Minimizes \(\sum (x_i - p_i)^2\).
-   - Constrains:
-     - \(\sum x_i = \text{total\_sample}\).
-     - Lower bounds for each cell (based on min cell sizes and base weight).
-     - Upper bounds for each cell (based on max cell sizes, population, and conversion rate).
-     - Dimension-wise minimum constraints.
+   - Constrains \(\sum x_i = \text{total\_sample}\).
+   - Imposes lower and upper bounds for each cell.
+   - Applies dimension-wise minimums if given.
 
 5. **Solving**  
-   - Attempts to solve the Mixed-Integer Quadratic Problem (MIQP) via CVXPY.
-   - Tries solvers like **SCIP** or **ECOS_BB**. If they fail, it diagnoses infeasibility using slack variables.
+   - Tries solvers like **SCIP** or **ECOS_BB** via CVXPY.
+   - If no feasible solution is found, a “slack-based” diagnostic helps identify the main conflicts.
 
-6. **Generating Outputs**  
-   - Once a solution \(x_i\) is found, it calculates the **base weight** as \(\frac{\text{Population}_i}{x_i}\) when \(x_i > 0\), and merges the results back into a final table.
+6. **Outputs**  
+   - On success, returns the integer \(x_i\) and computes the corresponding base weight 
+     \(\tfrac{\text{Population}_i}{x_i}\) (if \(x_i > 0\)).
 
 ---
 
 # 4. Brief Description of the Solver
 
-The code uses the [**CVXPY**](https://www.cvxpy.org/) library to model and solve a **mixed-integer optimization** problem. Key points:
+The code uses [CVXPY](https://www.cvxpy.org/) to model the **mixed-integer quadratic problem**. CVXPY’s role:
 
-- **Modeling:**  
-  You declare decision variables (`cp.Variable(n_cells, integer=True)`), define an objective function (`cp.sum_squares(x - df_long["PropSample"])`), and specify constraints (equalities, inequalities, integrality).
-
-- **Solvers:**  
-  - **SCIP** ([link](https://www.scipopt.org/)) is a well-known mixed-integer programming solver.
-  - **ECOS_BB** ([link](https://github.com/embotech/ecos)) is a branch-and-bound extension of ECOS for mixed-integer conic optimization.  
-  CVXPY automatically translates your problem into the appropriate format for the chosen solver.
-
-- **Outcome:**  
-  The solver searches for a feasible \(x\) that satisfies all constraints and **minimizes** the least-squares objective. If no feasible solution exists, the code can diagnose which constraints caused the infeasibility.
-
----
+- **Model Construction**: You define the decision variables, the objective function (least squares), and the constraints (equalities, inequalities, integrality).
+- **Solver Backend**:  
+  - **SCIP**: A well-known solver for mixed-integer optimization problems.  
+  - **ECOS_BB**: A branch-and-bound variant of the ECOS solver that supports integer constraints.
+- **Result**: The solver attempts to find a feasible solution that minimizes \(\sum (x_i - p_i)^2\). If it’s infeasible, the code can diagnose which constraints are violated.
 
 **Happy Optimizing!**
