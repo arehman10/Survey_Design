@@ -69,7 +69,7 @@ Each cell $$\(i\)$$ has:
 For a given dimension (e.g., Region, Size, or Industry), let’s say for Region $$\(r\)$$, we require:
 
 $$
-\sum_{i \in \,\text{cells for region }r} x_i \;\ge\;\text{dimension\_mins}[\text{Region}][r].
+\sum_{i \in \,\text{cells for region }r} x_i \;\ge\;\text{dimension\{_mins}}[\text{Region}][r].
 $$
 
 The code generalizes this to any specified dimension (Region, Size, or Industry).
