@@ -49,8 +49,8 @@ Each cell $$\(i\)$$ has:
 
   $$
   x_i \;\ge\; \max\!\Bigl(
-    \tfrac{\text{Population}_i}{\text{max\_base\_weight}},
-    \;\text{min\_cell\_size},
+    \tfrac{\text{Population}_i}{\text{max base weight}},
+    \;\text{min cell size},
     \;0
   \Bigr).
   $$
@@ -62,8 +62,8 @@ Each cell $$\(i\)$$ has:
   $$
   x_i \;\le\; \min\!\Bigl(
     \text{Population}_i,
-    \;\text{max\_cell\_size},
-    \;\lceil \text{Population}_i \times \text{conversion\_rate} \rceil
+    \;\text{max cell size},
+    \;\lceil \text{Population}_i \times \text{conversion rate} \rceil
   \Bigr).
   $$
 
