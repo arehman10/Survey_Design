@@ -2,7 +2,7 @@
 
 ## 1.1 Decision Variables
 
-Let there be $$\(n\)$$ cells. Each cell \(i\) (for \(i = 1,\dots,n\)) corresponds to a combination of Region, Size, and Industry in the data. The decision variable is:
+Let there be $$\(n\)$$ cells. Each cell $$\(i\)$$ (for $$\(i = 1,\dots,n\))$$ corresponds to a combination of Region, Size, and Industry in the data. The decision variable is:
 
 $$
 x_i \quad (\text{the sample size chosen for cell } i).
@@ -10,7 +10,7 @@ $$
 
 ## 1.2 Objective Function
 
-The code seeks to minimize the deviation between \(x_i\) and a “proportional” target \(p_i\).
+The code seeks to minimize the deviation between $$\(x_i\)$$ and a “proportional” target $$\(p_i\)$$.
 
 $$
 p_i = \text{PropSample}_i
@@ -31,7 +31,7 @@ $$
 \min \sum_{i=1}^{n} \bigl(x_i - p_i\bigr)^2.
 $$
 
-This is a **least-squares** type objective that penalizes deviation of \(x_i\) from the proportional target \(p_i\).
+This is a **least-squares** type objective that penalizes deviation of $$\(x_i\)$$ from the proportional target $$\(p_i\)$$.
 
 ## 1.3 Constraints
 
@@ -43,7 +43,7 @@ $$
 
 ### 1.3.2 Cell-Level Lower and Upper Bounds
 
-Each cell \(i\) has:
+Each cell $$\(i\)$$ has:
 
 - **A lower bound**:
 
@@ -71,7 +71,7 @@ Each cell \(i\) has:
 
 ### 1.3.3 Dimension-Wise Minimums
 
-For a given dimension (e.g., Region, Size, or Industry), let’s say for Region \(r\), we require:
+For a given dimension (e.g., Region, Size, or Industry), let’s say for Region $$\(r\)$$, we require:
 
 $$
 \sum_{i \in \,\text{cells for region }r} x_i \;\ge\;\text{dimension\_mins}[\text{Region}][r].
@@ -119,11 +119,11 @@ $$
 
 # 2. Closed-Form Solution (Under Simplified Assumptions)
 
-In general, because \(x_i\) must be integer and must satisfy multiple lower/upper bounds and dimension constraints, there is **no simple closed-form formula** for the exact solution.
+In general, because $$\(x_i\)$$ must be integer and must satisfy multiple lower/upper bounds and dimension constraints, there is **no simple closed-form formula** for the exact solution.
 
 However, if we **ignore**:
 
-1. Integrality (allowing \(x_i\) to be any real number),
+1. Integrality (allowing $$\(x_i\)$$ to be any real number),
 2. The lower bound constraints,
 3. The upper bound constraints,
 4. The dimension minimum constraints,
