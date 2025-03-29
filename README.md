@@ -18,12 +18,7 @@ $$
 
 is computed as:
 
-$$
-p_i 
-= \text{Population}_i \times 
-  \frac{\text{total\_sample}}
-       {\sum_{j=1}^{n} \text{Population}_j}.
-$$
+$$ p_i = \text{Population}_i \times \frac{\text{total\_sample}} {\sum_{j=1}^{n} \text{Population}_j}. $$
 
 The objective is:
 
