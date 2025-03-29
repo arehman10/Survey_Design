@@ -92,8 +92,8 @@ $$
 &\text{subject to} \\[-1pt]
 & \sum_{i=1}^{n} x_i = \text{total\_sample}, \\[6pt]
 & x_i \;\ge\; \max\!\Bigl(
-    \tfrac{\text{Pop}_i}{\text{max\_base\_weight}},
-    \;\text{min\_cell\_size},
+    \tfrac{\text{Pop}_i}{\text{max base weight}},
+    \;\text{min cell size},
     \;0
   \Bigr), 
   && \quad \forall i, \\[6pt]
