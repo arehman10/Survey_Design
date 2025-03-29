@@ -2,7 +2,7 @@
 
 ## 1.1 Decision Variables
 
-Let there be \(n\) cells. Each cell \(i\) (for \(i = 1,\dots,n\)) corresponds to a combination of Region, Size, and Industry in the data. The decision variable is:
+Let there be $$\(n\)$$ cells. Each cell \(i\) (for \(i = 1,\dots,n\)) corresponds to a combination of Region, Size, and Industry in the data. The decision variable is:
 
 $$
 x_i \quad (\text{the sample size chosen for cell } i).
