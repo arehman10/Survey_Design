@@ -38,7 +38,7 @@ This is a **least-squares** type objective that penalizes deviation of $$\(x_i\)
 ### 1.3.1 Sum of Samples Must Equal Total
 
 $$
-[\sum_{i=1}^{n} x_i \;=\; \text{total\_sample}.]
+\sum_{i=1}^{n} x_i \;=\; \text{total sample}.
 $$
 
 ### 1.3.2 Cell-Level Lower and Upper Bounds
