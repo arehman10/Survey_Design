@@ -1,3 +1,8 @@
+<script type="text/javascript" async
+  src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.5/MathJax.js?config=TeX-MML-AM_CHTML">
+</script>
+
+
 # 1. Pen-and-Paper Formulation
 
 ## 1.1 Decision Variables
