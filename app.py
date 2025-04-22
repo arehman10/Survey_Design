@@ -567,7 +567,7 @@ def main():
 
         
         for c in industry_cols:
-             if use_sum_universe:
+            if use_sum_universe:
                 df_adjusted[c] =  df_panel_wide[c].fillna(0) + df_fresh_wide_aligned[c]
             else:
                 df_adjusted[c] = np.maximum(df_panel_wide[c].fillna(0), df_fresh_wide_aligned[c].fillna(0))
