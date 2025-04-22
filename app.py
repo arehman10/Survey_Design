@@ -567,11 +567,10 @@ def main():
 
         
         for c in industry_cols:
-            if c in df_fresh_wide_aligned.columns:
-                if use_sum_universe:
-                    df_adjusted[c] =  df_panel_wide[c].fillna(0) + df_fresh_wide_aligned[c]
-                else:
-                    df_adjusted[c] = np.maximum(df_panel_wide[c].fillna(0), df_fresh_wide_aligned[c].fillna(0))
+             if use_sum_universe:
+                df_adjusted[c] =  df_panel_wide[c].fillna(0) + df_fresh_wide_aligned[c]
+            else:
+                df_adjusted[c] = np.maximum(df_panel_wide[c].fillna(0), df_fresh_wide_aligned[c].fillna(0))
 
         st.subheader("Adjusted Universe Table")
         st.data_editor(df_adjusted, use_container_width=True)
