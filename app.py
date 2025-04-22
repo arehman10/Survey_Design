@@ -567,7 +567,7 @@ def main():
 
         
         for c in industry_cols:
-            if c in df_fresh_wide.columns:
+            if c in df_fresh_wide_aligned.columns:
                 if use_sum_universe:
                     df_adjusted[c] =  df_panel_wide[c].fillna(0) + df_fresh_wide_aligned[c]
                 else:
