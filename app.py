@@ -558,19 +558,16 @@ def main():
         with st.expander("Original Fresh Table"):
             st.data_editor(df_fresh_wide, use_container_width=True)
 
-        # build Adjusted Universe with same row & column order as panel
+    # build Adjusted Universe with same row & column order as panel
         df_adjusted= df_panel_wide.copy()
         id_cols= ["Region","Size"]
         industry_cols= [c for c in df_panel_wide.columns if c not in id_cols]
-
-        df_fresh_wide_aligned = df_fresh_wide.reindex(index=df_panel_wide.index, columns=industry_cols).fillna(0)
-
-        
         for c in industry_cols:
-            if use_sum_universe:
-                df_adjusted[c] =  df_panel_wide[c].fillna(0) + df_fresh_wide_aligned[c]
-            else:
-                df_adjusted[c] = np.maximum(df_panel_wide[c].fillna(0), df_fresh_wide_aligned[c].fillna(0))
+            if c in df_fresh_wide.columns:
+                if use_sum_universe:
+                    df_adjusted[c] = df_panel_wide[c].fillna(0) + df_fresh_wide[c].fillna(0)
+                else:
+                    df_adjusted[c] = np.maximum(df_panel_wide[c].fillna(0), df_fresh_wide[c].fillna(0))
 
         st.subheader("Adjusted Universe Table")
         st.data_editor(df_adjusted, use_container_width=True)
