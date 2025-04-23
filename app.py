@@ -554,9 +554,9 @@ def main():
             return
 
         with st.expander("Original Panel Table"):
-            st.data_editor(df_panel_wide, use_container_width=True)
+            st.data_editor(df_panel_wide, use_container_width=True, key = "wide_panel")
         with st.expander("Original Fresh Table"):
-            st.data_editor(df_fresh_wide, use_container_width=True)
+            st.data_editor(df_fresh_wide, use_container_width=True, key = "wide_fresh")
 
     # build Adjusted Universe with same row & column order as panel
         df_adjusted= df_panel_wide.copy()
@@ -570,7 +570,7 @@ def main():
                     df_adjusted[c] = np.maximum(df_panel_wide[c].fillna(0), df_fresh_wide[c].fillna(0))
 
         st.subheader("Adjusted Universe Table")
-        st.data_editor(df_adjusted, use_container_width=True)
+        st.data_editor(df_adjusted, use_container_width=True, key = "adjusted_universe")
 
         # dimension sets from df_adjusted
         all_regions= df_adjusted["Region"].dropna().unique()
