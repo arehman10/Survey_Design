@@ -94,6 +94,29 @@ def write_excel_combined_table(df_combined, pivot_population, pivot_propsample):
     df_out = df_combined.reset_index()          # Region, Size become columns
     n_rows = df_out.shape[0]                    # incl. grand-total row
 
+
+        # ── 1. move index to columns ─────────────────────────────────────────────
+    df_out = df_combined.reset_index()          # Region, Size become columns
+    n_rows = df_out.shape[0]
+    
+    # ── 1-bis.  put Sample columns together, then BaseWeight columns ─────────
+    id_cols = [c for c in ["Region", "Size"] if c in df_out.columns]
+    
+    grand_sample = "GrandTotal_Sample"       if "GrandTotal_Sample"       in df_out.columns else None
+    grand_bw     = "GrandTotal_BaseWeight"   if "GrandTotal_BaseWeight"   in df_out.columns else None
+    
+    sample_cols  = [c for c in df_out.columns
+                    if c.endswith("_Sample")     and c != grand_sample]
+    bw_cols      = [c for c in df_out.columns
+                    if c.endswith("_BaseWeight") and c != grand_bw]
+    
+    new_order = id_cols + sample_cols + bw_cols
+    if grand_sample: new_order.append(grand_sample)     # keep totals at the end
+    if grand_bw:     new_order.append(grand_bw)
+    
+    df_out = df_out[new_order]                # ← *** re-ordered dataframe ***
+    
+
     subset_bw_cols = [c for c in df_out.columns if c.endswith("_BaseWeight")]
     norm_bw_cols   = [c for c in subset_bw_cols
                       if c != "GrandTotal_BaseWeight"]  # exclude total
