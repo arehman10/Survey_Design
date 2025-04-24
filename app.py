@@ -57,7 +57,7 @@ def dfs_to_html(sections):
     Returns bytes of a single HTML file with scrollable <div> around each table.
     """
     parts = []
-    for title, df in sections:
+    for title, obj in sections:
         parts.append(f"<h2>{html.escape(title)}</h2>")
         parts.append('<div class="scrollbox">')
         if isinstance(obj, Styler):
