@@ -60,7 +60,7 @@ def dfs_to_html(sections):
     for title, df in sections:
         parts.append(f"<h2>{html.escape(title)}</h2>")
         parts.append('<div class="scrollbox">')
-         if isinstance(obj, Styler):
+        if isinstance(obj, Styler):
             parts.append(obj.to_html())           # keeps colours!
         else:
             parts.append(obj.to_html(index=False, border=0, justify="center"))
