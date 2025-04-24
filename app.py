@@ -134,7 +134,7 @@ def write_excel_combined_table(df_combined, pivot_population, pivot_propsample):
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
 
-        df_out = df_combined.reset_index()
+       # df_out = df_combined.reset_index()
         sheet_name = "Combined"
         df_out.to_excel(writer, sheet_name=sheet_name, startrow=0, startcol=0, index=False)
 
