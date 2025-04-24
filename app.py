@@ -147,7 +147,7 @@ def write_excel_combined_table(df_combined, pivot_population, pivot_propsample):
         df_out = df_out.drop(columns=["GrandTotal_BaseWeight"], errors="ignore")
 
          # 1) Samples sheet – no colouring needed
-        df_samples.to_excel(writer, sheet_name="Samples",
+        df_samples.to_excel(writer, sheet_name="Allocated Sample",
                             startrow=0, startcol=0, index=False)
     
         # 2) BaseWeights sheet – this is where you apply rounding,
@@ -158,7 +158,7 @@ def write_excel_combined_table(df_combined, pivot_population, pivot_propsample):
 #        ws = writer.sheets["BaseWeights"]   # all formatting applies to this sheet
 
        # df_out = df_combined.reset_index()
-        sheet_name = "Combined"
+        sheet_name = "Sample_with_baseweight"
         df_out.to_excel(writer, sheet_name=sheet_name, startrow=0, startcol=0, index=False)
 
         ws = writer.sheets[sheet_name]
