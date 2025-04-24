@@ -107,6 +107,17 @@ def write_excel_combined_table(df_combined, pivot_population, pivot_propsample):
     front_cols  = [c for c in front_cols if c in df_out.columns]
     
     df_out = df_out[front_cols + sample_cols + bw_cols]   # ← *** new order ***
+
+    # ----------------------------------------------------------
+    # Build the two separate tables
+    id_cols       = [c for c in ["Region", "Size"] if c in df_out.columns]
+    
+    sample_cols   = [c for c in df_out.columns if c.endswith("_Sample")]
+    bw_cols       = [c for c in df_out.columns if c.endswith("_BaseWeight")]
+    
+    df_samples    = df_out[id_cols + sample_cols]                   # table 1
+    df_baseweight = df_out[id_cols + bw_cols]                       # table 2
+    # ----------------------------------------------------------
     
     n_rows = df_out.shape[0]
     
@@ -133,6 +144,17 @@ def write_excel_combined_table(df_combined, pivot_population, pivot_propsample):
     output = io.BytesIO()
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
+
+         # 1) Samples sheet – no colouring needed
+        df_samples.to_excel(writer, sheet_name="Samples",
+                            startrow=0, startcol=0, index=False)
+    
+        # 2) BaseWeights sheet – this is where you apply rounding,
+        #    colour scale, number format, etc.
+        df_baseweight.to_excel(writer, sheet_name="BaseWeights",
+                               startrow=0, startcol=0, index=False)
+    
+        ws = writer.sheets["BaseWeights"]   # all formatting applies to this sheet
 
        # df_out = df_combined.reset_index()
         sheet_name = "Combined"
