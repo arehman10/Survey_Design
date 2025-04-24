@@ -135,7 +135,7 @@ def write_excel_combined_table(df_combined, pivot_population, pivot_propsample):
             col_idx   = df_out.columns.get_loc(col_name) + 1   # 1-based
             excel_col = get_column_letter(col_idx)
             first_row = 2                                      # data start
-            last_row  = n_rows + 1                             # inclusive
+            last_row  = n_rows                            # inclusive
             rng       = f"{excel_col}{first_row}:{excel_col}{last_row}"
             ws.conditional_formatting.add(rng, make_rule())
 
