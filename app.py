@@ -987,7 +987,16 @@ def main():
                         margins=False,
                         sort=False
                     ).reset_index()
-                    pivot_propsample = pivot_propsample.round(0).astype(int)
+                    
+                    num_cols = pivot_propsample.select_dtypes(include="number").columns
+                    pivot_propsample[num_cols] = (
+                        pivot_propsample[num_cols]
+                          .round(0)           # 0 decimals
+                          .fillna(0)          # if NaNs are possible
+                          .astype(int)        # cast safely
+                    )
+                    # ------------------------------------------------------------------
+                    
                     st.subheader("Proportional Sample")
                     col_cfg_prop={}
                     if "Region" in pivot_propsample.columns:
