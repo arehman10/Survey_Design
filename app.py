@@ -9,6 +9,9 @@ from openpyxl.utils import get_column_letter
 from openpyxl.formatting.rule import ColorScaleRule
 import matplotlib.colors as mcolors
 from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm
+import base64
+import streamlit.components.v1 as components
+from datetime import datetime
 
 # If using GLPK:
 import swiglpk as glpk
@@ -644,6 +647,29 @@ def pivot_in_original_order(df_alloc, df_original_wide, col_for_alloc):
 # 6) MAIN APP
 ###############################################################################
 def main():
+    # inside your `with st.container()` or directly inside main()
+    if st.button("Download full page as HTML"):
+        with st.spinner("Building HTML…"):
+            html_source = components.html(
+                """
+                <script>
+                  const htmlSrc = btoa(unescape(encodeURIComponent(document.documentElement.outerHTML)));
+                  parent.postMessage({type:"htmlDump", data:htmlSrc}, "*");
+                </script>
+                """,
+                height=0, width=0
+            )
+    
+        html_dump = st.session_state.pop("htmlDump", None)
+        if html_dump:
+            html_bytes = base64.b64decode(html_dump)
+            fname = f"SurveyDesign_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+            st.download_button("📄 Download page as HTML",
+                               data=html_bytes,
+                               file_name=fname,
+                               mime="text/html")
+
+    
     title_placeholder = st.empty()
     title_placeholder.title("Survey Design")
     st.write("""
