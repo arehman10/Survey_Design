@@ -133,8 +133,8 @@ def write_excel_combined_table(df_combined, pivot_population, pivot_propsample):
                 mid_type="num",   mid_value=global_mid,  mid_color="FFFF00",
                 end_type="num",   end_value=global_max,  end_color="FF0000",
         )
-
-'''
+        
+        '''
         for col_idx, col_name in enumerate(df_combined.columns, start=1):
             if col_name.endswith("_BaseWeight") and col_name != "GrandTotal_BaseWeight":
                 excel_col = get_column_letter(col_idx+2)
