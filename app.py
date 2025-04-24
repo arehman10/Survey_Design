@@ -17,13 +17,7 @@ import swiglpk as glpk
 # 1) HELPER FUNCTIONS
 ###############################################################################
 
- # Colour scale rule template
-def make_rule():
-    return ColorScaleRule(
-        start_type="num", start_value=global_min, start_color="00FF00",
-        mid_type="num",   mid_value=global_mid,  mid_color="FFFF00",
-        end_type="num",   end_value=global_max,  end_color="FF0000",
-    )
+
 
 def compute_n_infinity(z_score, margin_of_error, p):
     return (z_score ** 2) * p * (1 - p) / (margin_of_error ** 2)
@@ -123,11 +117,19 @@ def write_excel_combined_table(df_combined, pivot_population, pivot_propsample):
         df_out.to_excel(writer, sheet_name=sheet_name, startrow=0, startcol=0, index=False)
 
         ws = writer.sheets[sheet_name]
-        
+
+      # Colour scale rule template
+        def make_rule():
+            return ColorScaleRule(
+                start_type="num", start_value=global_min, start_color="00FF00",
+                mid_type="num",   mid_value=global_mid,  mid_color="FFFF00",
+                end_type="num",   end_value=global_max,  end_color="FF0000",
+            )
+                
      #   n_rows = df_combined.shape[0]
      #   n_cols = df_combined.shape[1]
 
-'''
+        '''
         
         color_rule = ColorScaleRule(
             start_type="min", start_color="00FF00",
