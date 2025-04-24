@@ -148,6 +148,13 @@ def write_excel_combined_table(df_combined, pivot_population, pivot_propsample):
              # NEW: one-decimal display format
             for cell in ws[f"{excel_col}{first_row}":f"{excel_col}{last_row}"]:
                 cell[0].number_format = "0.0"
+        # ------------------------------------------------------------------
+        # Apply the one-decimal display format to GrandTotal_BaseWeight
+        if "GrandTotal_BaseWeight" in df_out.columns:
+            gt_idx   = df_out.columns.get_loc("GrandTotal_BaseWeight") + 1  # 1-based
+            gt_col   = get_column_letter(gt_idx)
+            for cell in ws[f"{gt_col}2":f"{gt_col}{n_rows+1}"]:
+                cell[0].number_format = "0.0"        
 
         pivot_population.to_excel(writer, sheet_name="Population")
         pivot_propsample.to_excel(writer, sheet_name="Proportional Sample")
