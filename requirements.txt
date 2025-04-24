@@ -9,3 +9,4 @@ pyscipopt
 gurobipy
 pyomo
 ecos
+weasyprint
