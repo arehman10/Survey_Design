@@ -904,9 +904,6 @@ def main():
                     st.data_editor(pivot_fresh, column_config=col_cfg_fresh, use_container_width=True)
 
                     # combined
-                    df_combined= create_combined_table_with_totals(df_alloc)
-
-
                     # ------------------------------------------------------------------
                     df_combined = create_combined_table_with_totals(df_alloc)
                     
