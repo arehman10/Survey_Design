@@ -1122,6 +1122,8 @@ def main():
                     html_bytes = dfs_to_html(snapshot_sections)
                     snapshot_basename = base_filename       # ← base file name without extension
                     html_fname        = f"{snapshot_basename}_snapshot.html"
+
+                    html_bytes = dfs_to_html(snapshot_sections, page_title=snapshot_basename)
                     
                     st.download_button(
                         label="🌐 Download full page as HTML",
