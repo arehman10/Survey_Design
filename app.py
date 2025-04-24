@@ -1100,6 +1100,13 @@ def main():
                     )
 
                     # -----------------------------------------------------------
+                     # ---------- rebuild minimum tables for snapshot ----------
+                    region_min_df   = pd.DataFrame(dimension_mins["Region"].items(),
+                                                   columns=["Region", "Region_Min"])
+                    size_min_df     = pd.DataFrame(dimension_mins["Size"].items(),
+                                                   columns=["Size", "Size_Min"])
+                    industry_min_df = pd.DataFrame(dimension_mins["Industry"].items(),
+                                           columns=["Industry", "Industry_Min"])
                     #  Build list of tables to go into the HTML snapshot
                     snapshot_sections = [
                         ("Run Parameters",               params_df),
