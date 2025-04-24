@@ -777,6 +777,28 @@ def main():
             return tot
 
         with st.sidebar.expander("Dimension Minimum Overrides", expanded=True):
+            
+            st.write("Defaults from sample-size formula, override if you like.")
+            st.markdown("**By Region**")
+            for r in all_regions:
+                pop_ = sum_pop_in_dim(df_adjusted,"Region", r)
+                defMin= compute_fpc_min(pop_, n_infinity)
+                user_val= st.number_input(f"Min sample for Region={r}", min_value=0, value=int(round(defMin)), step=1)
+                dimension_mins["Region"][r]= user_val
+
+            st.markdown("**By Size**")
+            for sz in all_sizes:
+                pop_ = sum_pop_in_dim(df_adjusted,"Size", sz)
+                defMin= compute_fpc_min(pop_, n_infinity)
+                user_val= st.number_input(f"Min sample for Size={sz}", min_value=0, value=int(round(defMin)), step=1)
+                dimension_mins["Size"][sz]= user_val
+
+            st.markdown("**By Industry**")
+            for ind_ in all_inds:
+                pop_= df_adjusted[ind_].fillna(0).sum()
+                defMin= compute_fpc_min(pop_, n_infinity)
+                user_val= st.number_input(f"Min sample for Industry={ind_}", min_value=0, value=int(round(defMin)), step=1)
+                dimension_mins["Industry"][ind_]= user_val
 
             
             param_dict = {
@@ -812,34 +834,7 @@ def main():
             st.data_editor(size_min_df, use_container_width=True)
             
             st.subheader("Sector-wise Minimum Sample")
-            st.data_editor(industry_min_df, use_container_width=True)
-            # ------------------------------------------------------------------
-        
-
-
-
-            
-            st.write("Defaults from sample-size formula, override if you like.")
-            st.markdown("**By Region**")
-            for r in all_regions:
-                pop_ = sum_pop_in_dim(df_adjusted,"Region", r)
-                defMin= compute_fpc_min(pop_, n_infinity)
-                user_val= st.number_input(f"Min sample for Region={r}", min_value=0, value=int(round(defMin)), step=1)
-                dimension_mins["Region"][r]= user_val
-
-            st.markdown("**By Size**")
-            for sz in all_sizes:
-                pop_ = sum_pop_in_dim(df_adjusted,"Size", sz)
-                defMin= compute_fpc_min(pop_, n_infinity)
-                user_val= st.number_input(f"Min sample for Size={sz}", min_value=0, value=int(round(defMin)), step=1)
-                dimension_mins["Size"][sz]= user_val
-
-            st.markdown("**By Industry**")
-            for ind_ in all_inds:
-                pop_= df_adjusted[ind_].fillna(0).sum()
-                defMin= compute_fpc_min(pop_, n_infinity)
-                user_val= st.number_input(f"Min sample for Industry={ind_}", min_value=0, value=int(round(defMin)), step=1)
-                dimension_mins["Industry"][ind_]= user_val
+            st.data_editor(industry_min_df, use_container_width=True)        
 
         if st.button("Run Optimization"):
             try:
