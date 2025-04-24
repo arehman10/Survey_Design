@@ -848,22 +848,6 @@ def main():
                     df_combined_reset= df_combined.reset_index()
                     st.subheader("Allocated Sample & Base Weights")
 
-                    # ---------- Region-wise sample totals -------------
-                    st.subheader("Region-wise Sample Totals")
-                    st.data_editor(region_totals,
-                                   column_config={
-                                       "Region": st.column_config.TextColumn("Region")
-                                   },
-                                   use_container_width=True)
-                    
-                    # ---------- Size-wise sample totals ---------------
-                    st.subheader("Size-wise Sample Totals")
-                    st.data_editor(size_totals,
-                                   column_config={
-                                       "Size": st.column_config.TextColumn("Size")
-                                   },
-                                   use_container_width=True)
-
 #   Coloring happens here
                     subset_bw_cols = [c for c in df_combined.columns if c.endswith("_BaseWeight")]
                     norm_bw_cols = [c for c in subset_bw_cols if c!="GrandTotal_BaseWeight"]
@@ -890,15 +874,28 @@ def main():
                     st.dataframe(stcol)
                     
 
-
-
-
                     col_cfg_combined={}
                     if "Region" in df_combined_reset.columns:
                         col_cfg_combined["Region"] = st.column_config.TextColumn("Region")
                     if "Size" in df_combined_reset.columns:
                         col_cfg_combined["Size"] = st.column_config.TextColumn("Size")
            #         st.data_editor(df_combined_reset, column_config=col_cfg_combined, use_container_width=True)
+
+                      # ---------- Region-wise sample totals -------------
+                    st.subheader("Region-wise Sample Totals")
+                    st.data_editor(region_totals,
+                                   column_config={
+                                       "Region": st.column_config.TextColumn("Region")
+                                   },
+                                   use_container_width=True)
+                    
+                    # ---------- Size-wise sample totals ---------------
+                    st.subheader("Size-wise Sample Totals")
+                    st.data_editor(size_totals,
+                                   column_config={
+                                       "Size": st.column_config.TextColumn("Size")
+                                   },
+                                   use_container_width=True)
 
                     # population => row/col totals
                     pivot_pop= pd.pivot_table(
