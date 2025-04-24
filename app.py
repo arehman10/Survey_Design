@@ -151,8 +151,8 @@ def write_excel_combined_table(df_combined, pivot_population, pivot_propsample):
     
         # 2) BaseWeights sheet – this is where you apply rounding,
         #    colour scale, number format, etc.
-        df_baseweight.to_excel(writer, sheet_name="BaseWeights",
-                               startrow=0, startcol=0, index=False)
+#        df_baseweight.to_excel(writer, sheet_name="BaseWeights",
+ #                              startrow=0, startcol=0, index=False)
     
         ws = writer.sheets["BaseWeights"]   # all formatting applies to this sheet
 
