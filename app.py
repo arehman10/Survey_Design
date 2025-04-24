@@ -930,6 +930,7 @@ def main():
                         n=len(series)
                         return [baseweight_color(val) if i<n-1 else "" for i,val in enumerate(series)]
 
+                    df_combined[subset_bw_cols] = df_combined[subset_bw_cols].round(1)
                     stcol= df_combined.style.apply(style_bwcol, subset=norm_bw_cols)
                     st.dataframe(stcol)
                     
@@ -981,6 +982,7 @@ def main():
                         margins=False,
                         sort=False
                     ).reset_index()
+                    pivot_propsample = pivot_propsample.round(0).astype(int)
                     st.subheader("Proportional Sample")
                     col_cfg_prop={}
                     if "Region" in pivot_propsample.columns:
