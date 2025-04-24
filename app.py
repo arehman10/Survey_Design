@@ -96,7 +96,7 @@ def write_excel_combined_table(df_combined, pivot_population, pivot_propsample):
 
 
         # ── 1. move index to columns ─────────────────────────────────────────────
-    df_out = df_combined.reset_index()          # Region, Size become columns
+#    df_out = df_combined.reset_index()          # Region, Size become columns
 
        # ── 1-bis. reorder so all *_Sample columns come first, then *_BaseWeight
     sample_cols = [c for c in df_out.columns if c.endswith("_Sample")]
