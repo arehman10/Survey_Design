@@ -66,10 +66,7 @@ def dfs_to_html(sections):
             parts.append(obj.to_html(index=False, border=0, justify="center"))
       #  parts.append(df.to_html(index=False, border=0, justify="center"))
         parts.append("</div>")
-    full = HTML_TEMPLATE.format(
-        body_html="\n".join(parts),
-        page_title=html.escape(page_title)
-    )
+    full = HTML_TEMPLATE.format(body_html="\n".join(parts),page_title=html.escape(page_title))
     return full.encode("utf-8")
 
 
