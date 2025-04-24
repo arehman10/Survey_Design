@@ -644,6 +644,34 @@ def pivot_in_original_order(df_alloc, df_original_wide, col_for_alloc):
             df_out.at[i, c]= alloc_dict.get((reg, sz, c), 0)
     return df_out
 
+SAVE_AS_HTML_JS = """
+<button id="saveHtmlBtn"
+        style="margin:8px 0;padding:6px 12px;
+               font-weight:600;font-size:14px;
+               color:#fff;background:#3b76ef;
+               border:none;border-radius:4px;cursor:pointer;">
+    💾 Save this page as HTML
+</button>
+
+<script>
+document.getElementById('saveHtmlBtn').onclick = () => {
+  // 1) grab a complete snapshot
+  const html = '<!DOCTYPE html>' + document.documentElement.outerHTML;
+  // 2) turn it into a downloadable Blob
+  const blob = new Blob([html], {type: 'text/html'});
+  const url  = URL.createObjectURL(blob);
+  // 3) auto-download
+  const a = document.createElement('a');
+  a.href      = url;
+  a.download  = 'SurveyDesign_snapshot.html';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};
+</script>
+"""
+
 
 ###############################################################################
 # 6) MAIN APP
@@ -966,6 +994,7 @@ def main():
                         file_name="Optimized_Results.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
+                    st.markdown(SAVE_AS_HTML_JS, unsafe_allow_html=True)
 
             except ValueError as e:
                 st.error(str(e))
