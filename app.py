@@ -142,14 +142,30 @@ def write_excel_combined_table(df_combined, pivot_population, pivot_propsample):
 
 
     output = io.BytesIO()
-
+    pivot_propsample_rounded = pivot_propsample.round(0).astype(int)
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df_out = df_out.drop(columns=["GrandTotal_BaseWeight"], errors="ignore")
 
          # 1) Samples sheet – no colouring needed
         df_samples.to_excel(writer, sheet_name="Allocated Sample",
                             startrow=0, startcol=0, index=False)
+
+        # Proportional Sample – write the rounded version
+        pivot_propsample_rounded.reset_index().to_excel(
+            writer, sheet_name="Proportional Sample", index=False)
+
+         # --------------------------------------------------------------
+        # force 0-decimal display in the Proportional Sample sheet
+        ws_prop = writer.sheets["Proportional Sample"]
+        first_row = 2                                       # data start
+        last_row  = ws_prop.max_row
+        first_col = 3                                       # skip Region & Size
+        last_col  = ws_prop.max_column
     
+        for row in ws_prop.iter_rows(min_row=first_row, max_row=last_row,
+                                     min_col=first_col,  max_col=last_col):
+            for cell in row:
+                cell.number_format = "0"                    # 0 decimal places
         # 2) BaseWeights sheet – this is where you apply rounding,
         #    colour scale, number format, etc.
 #        df_baseweight.to_excel(writer, sheet_name="BaseWeights",
