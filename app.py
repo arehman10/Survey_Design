@@ -127,8 +127,8 @@ def write_excel_combined_table(df_combined, pivot_population, pivot_propsample):
         )'''
 
         # Colour scale rule template
-        def make_rule():
-            return ColorScaleRule(
+    def make_rule():
+        return ColorScaleRule(
                 start_type="num", start_value=global_min, start_color="00FF00",
                 mid_type="num",   mid_value=global_mid,  mid_color="FFFF00",
                 end_type="num",   end_value=global_max,  end_color="FF0000",
