@@ -140,6 +140,10 @@ def write_excel_combined_table(df_combined, pivot_population, pivot_propsample):
             rng       = f"{excel_col}{first_row}:{excel_col}{last_row}"
             ws.conditional_formatting.add(rng, make_rule())
 
+             # NEW: one-decimal display format
+            for cell in ws[f"{excel_col}{first_row}":f"{excel_col}{last_row}"]:
+                cell[0].number_format = "0.0"
+
         pivot_population.to_excel(writer, sheet_name="Population")
         pivot_propsample.to_excel(writer, sheet_name="Proportional Sample")
 
