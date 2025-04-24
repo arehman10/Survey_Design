@@ -1108,6 +1108,7 @@ def main():
                         ("Region-wise Minimum Sample",     region_min_df),     # ← NEW
                         ("Size-wise Minimum Sample",       size_min_df),       # ← NEW
                         ("Sector-wise Minimum Sample",     industry_min_df),   # ← NEW
+                        ("Adjusted Universe",            df_adjusted),        # ← added
                         ("Panel Sample (with totals)",   pivot_panel),
                         ("Fresh Sample (with totals)",   pivot_fresh),
                         ("Allocated Sample & Base Weights", stcol),        # ← NEW
