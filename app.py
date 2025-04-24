@@ -723,41 +723,6 @@ def main():
     dimension_mins= {"Region":{}, "Size":{}, "Industry":{}}
 
 
-    param_dict = {
-        "Total Sample"          : total_sample,
-        "Min Cell Size"         : min_cell_size,
-        "Max Cell Size"         : max_cell_size,
-        "Max Base Weight"       : max_base_weight,
-        "Solver"                : solver_choice,
-        "Conversion Rate"       : conversion_rate,
-        "Use sum(panel,fresh)"  : use_sum_universe,
-        "Z-Score"               : z_score,
-        "Margin of Error"       : margin_of_error,
-        "p (Population Prop.)"  : p,
-    }
-    params_df = pd.DataFrame(list(param_dict.items()),
-                             columns=["Parameter", "Value"])
-   
-    # NEW  ➜  tidy tables for the minimum overrides
-    region_min_df   = pd.DataFrame(dimension_mins["Region"].items(),
-                                   columns=["Region", "Region_Min"])
-    size_min_df     = pd.DataFrame(dimension_mins["Size"].items(),
-                                   columns=["Size", "Size_Min"])
-    industry_min_df = pd.DataFrame(dimension_mins["Industry"].items(),
-                                   columns=["Industry", "Industry_Min"])
-
-    st.subheader("Run Parameters")
-    st.data_editor(params_df, use_container_width=True)
-
-    st.subheader("Region-wise Minimum Sample")
-    st.data_editor(region_min_df, use_container_width=True)
-    
-    st.subheader("Size-wise Minimum Sample")
-    st.data_editor(size_min_df, use_container_width=True)
-    
-    st.subheader("Sector-wise Minimum Sample")
-    st.data_editor(industry_min_df, use_container_width=True)
-    # ------------------------------------------------------------------
     # ------------------------------------------------------------------
     
     if uploaded_file is not None:
@@ -812,6 +777,48 @@ def main():
             return tot
 
         with st.sidebar.expander("Dimension Minimum Overrides", expanded=True):
+
+            
+            param_dict = {
+                "Total Sample"          : total_sample,
+                "Min Cell Size"         : min_cell_size,
+                "Max Cell Size"         : max_cell_size,
+                "Max Base Weight"       : max_base_weight,
+                "Solver"                : solver_choice,
+                "Conversion Rate"       : conversion_rate,
+                "Use sum(panel,fresh)"  : use_sum_universe,
+                "Z-Score"               : z_score,
+                "Margin of Error"       : margin_of_error,
+                "p (Population Prop.)"  : p,
+            }
+            params_df = pd.DataFrame(list(param_dict.items()),
+                                     columns=["Parameter", "Value"])
+           
+            # NEW  ➜  tidy tables for the minimum overrides
+            region_min_df   = pd.DataFrame(dimension_mins["Region"].items(),
+                                           columns=["Region", "Region_Min"])
+            size_min_df     = pd.DataFrame(dimension_mins["Size"].items(),
+                                           columns=["Size", "Size_Min"])
+            industry_min_df = pd.DataFrame(dimension_mins["Industry"].items(),
+                                           columns=["Industry", "Industry_Min"])
+        
+            st.subheader("Run Parameters")
+            st.data_editor(params_df, use_container_width=True)
+        
+            st.subheader("Region-wise Minimum Sample")
+            st.data_editor(region_min_df, use_container_width=True)
+            
+            st.subheader("Size-wise Minimum Sample")
+            st.data_editor(size_min_df, use_container_width=True)
+            
+            st.subheader("Sector-wise Minimum Sample")
+            st.data_editor(industry_min_df, use_container_width=True)
+            # ------------------------------------------------------------------
+        
+
+
+
+            
             st.write("Defaults from sample-size formula, override if you like.")
             st.markdown("**By Region**")
             for r in all_regions:
