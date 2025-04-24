@@ -1120,7 +1120,7 @@ def main():
                         ("Proportional Sample",          pivot_propsample),
                     ]
                     html_bytes = dfs_to_html(snapshot_sections)
-                    snapshot_basename = display_title       # ← base file name without extension
+                    snapshot_basename = base_filename       # ← base file name without extension
                     html_fname        = f"{snapshot_basename}_snapshot.html"
                     
                     st.download_button(
