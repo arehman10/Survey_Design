@@ -778,6 +778,25 @@ def main():
                     df_alloc= df_long_final.copy()
                     df_alloc= allocate_panel_fresh(df_alloc, df_panel_wide, df_fresh_wide)
 
+                    # ========== NEW: quick Region- and Size-wise sample totals ==========
+                    region_totals = (
+                        df_alloc
+                          .groupby("Region")["PanelAllocated", "FreshAllocated"]
+                          .sum()
+                          .assign(SampleTotal=lambda d: d["PanelAllocated"] + d["FreshAllocated"])
+                          .reset_index()
+                    )
+                    
+                    size_totals = (
+                        df_alloc
+                          .groupby("Size")["PanelAllocated", "FreshAllocated"]
+                          .sum()
+                          .assign(SampleTotal=lambda d: d["PanelAllocated"] + d["FreshAllocated"])
+                          .reset_index()
+                    )
+                    # ------------------------------------------------------------------
+                                        
+
                     # final panel & fresh pivot with row/col totals
                     pivot_panel = pd.pivot_table(
                         df_alloc,
@@ -823,6 +842,22 @@ def main():
                     df_combined= create_combined_table_with_totals(df_alloc)
                     df_combined_reset= df_combined.reset_index()
                     st.subheader("Allocated Sample & Base Weights")
+
+                    # ---------- Region-wise sample totals -------------
+                    st.subheader("Region-wise Sample Totals")
+                    st.data_editor(region_totals,
+                                   column_config={
+                                       "Region": st.column_config.TextColumn("Region")
+                                   },
+                                   use_container_width=True)
+                    
+                    # ---------- Size-wise sample totals ---------------
+                    st.subheader("Size-wise Sample Totals")
+                    st.data_editor(size_totals,
+                                   column_config={
+                                       "Size": st.column_config.TextColumn("Size")
+                                   },
+                                   use_container_width=True)
 
 #   Coloring happens here
                     subset_bw_cols = [c for c in df_combined.columns if c.endswith("_BaseWeight")]
