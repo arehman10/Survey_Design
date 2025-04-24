@@ -27,7 +27,33 @@ def add_grand_total_row(df, key_col_name):
     grand[key_col_name] = "Grand Total"
     # keep the same column order
     return pd.concat([df, grand], ignore_index=True)[df.columns]
+SAVE_AS_HTML_JS = """
+<button id="saveHtmlBtn"
+        style="margin:8px 0;padding:6px 12px;
+               font-weight:600;font-size:14px;
+               color:#fff;background:#3b76ef;
+               border:none;border-radius:4px;cursor:pointer;">
+    💾 Save this page as HTML
+</button>
 
+<script>
+document.getElementById('saveHtmlBtn').onclick = () => {
+  // 1) grab a complete snapshot
+  const html = '<!DOCTYPE html>' + document.documentElement.outerHTML;
+  // 2) turn it into a downloadable Blob
+  const blob = new Blob([html], {type: 'text/html'});
+  const url  = URL.createObjectURL(blob);
+  // 3) auto-download
+  const a = document.createElement('a');
+  a.href      = url;
+  a.download  = 'SurveyDesign_snapshot.html';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};
+</script>
+"""
 
 def compute_n_infinity(z_score, margin_of_error, p):
     return (z_score ** 2) * p * (1 - p) / (margin_of_error ** 2)
@@ -644,33 +670,6 @@ def pivot_in_original_order(df_alloc, df_original_wide, col_for_alloc):
             df_out.at[i, c]= alloc_dict.get((reg, sz, c), 0)
     return df_out
 
-SAVE_AS_HTML_JS = """
-<button id="saveHtmlBtn"
-        style="margin:8px 0;padding:6px 12px;
-               font-weight:600;font-size:14px;
-               color:#fff;background:#3b76ef;
-               border:none;border-radius:4px;cursor:pointer;">
-    💾 Save this page as HTML
-</button>
-
-<script>
-document.getElementById('saveHtmlBtn').onclick = () => {
-  // 1) grab a complete snapshot
-  const html = '<!DOCTYPE html>' + document.documentElement.outerHTML;
-  // 2) turn it into a downloadable Blob
-  const blob = new Blob([html], {type: 'text/html'});
-  const url  = URL.createObjectURL(blob);
-  // 3) auto-download
-  const a = document.createElement('a');
-  a.href      = url;
-  a.download  = 'SurveyDesign_snapshot.html';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-};
-</script>
-"""
 
 
 ###############################################################################
