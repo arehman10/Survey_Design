@@ -737,6 +737,17 @@ def main():
     }
     params_df = pd.DataFrame(list(param_dict.items()),
                              columns=["Parameter", "Value"])
+
+    st.subheader("Run Parameters")
+    st.data_editor(params_df, use_container_width=True)
+    st.subheader("Region-wise Minimum Sample")
+    st.data_editor(region_min_df, use_container_width=True)
+    
+    st.subheader("Size-wise Minimum Sample")
+    st.data_editor(size_min_df, use_container_width=True)
+    
+    st.subheader("Sector-wise Minimum Sample")
+    st.data_editor(industry_min_df, use_container_width=True)
     
     # NEW  ➜  tidy tables for the minimum overrides
     region_min_df   = pd.DataFrame(dimension_mins["Region"].items(),
