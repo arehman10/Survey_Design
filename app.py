@@ -16,7 +16,12 @@ import swiglpk as glpk
 ###############################################################################
 # 1) HELPER FUNCTIONS
 ###############################################################################
-
+def add_grand_total_row(df, key_col_name):
+    """Return df with an extra row that holds the column totals."""
+    grand = df[["PanelSample", "FreshSample", "SampleTotal"]].sum().to_frame().T
+    grand[key_col_name] = "Grand Total"
+    # keep the same column order
+    return pd.concat([df, grand], ignore_index=True)[df.columns]
 
 
 def compute_n_infinity(z_score, margin_of_error, p):
