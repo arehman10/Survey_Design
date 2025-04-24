@@ -14,7 +14,6 @@ import streamlit.components.v1 as components
 from datetime import datetime
 
 import base64, tempfile, html
-from weasyprint import HTML          # pip install weasyprint
 
 # If using GLPK:
 import swiglpk as glpk
