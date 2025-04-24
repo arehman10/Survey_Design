@@ -781,7 +781,7 @@ def main():
                     # ========== NEW: quick Region- and Size-wise sample totals ==========
                     region_totals = (
                         df_alloc
-                          .groupby("Region")["PanelAllocated", "FreshAllocated"]
+                          .groupby("Region")[["PanelAllocated", "FreshAllocated"]]
                           .sum()
                           .assign(SampleTotal=lambda d: d["PanelAllocated"] + d["FreshAllocated"])
                           .reset_index()
@@ -789,7 +789,7 @@ def main():
                     
                     size_totals = (
                         df_alloc
-                          .groupby("Size")["PanelAllocated", "FreshAllocated"]
+                          .groupby("Size")[["PanelAllocated", "FreshAllocated"]] 
                           .sum()
                           .assign(SampleTotal=lambda d: d["PanelAllocated"] + d["FreshAllocated"])
                           .reset_index()
