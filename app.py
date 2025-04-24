@@ -88,31 +88,69 @@ def write_excel_combined_table(df_combined, pivot_population, pivot_propsample):
       - 'Population' (row&col totals)
       - 'Proportional Sample' (no totals)
     """
+    df_out = df_combined.reset_index()          # Region, Size become columns
+    n_rows = df_out.shape[0]                    # incl. grand-total row
+
+    subset_bw_cols = [c for c in df_out.columns if c.endswith("_BaseWeight")]
+    norm_bw_cols   = [c for c in subset_bw_cols
+                      if c != "GrandTotal_BaseWeight"]  # exclude total
+
+
+    if norm_bw_cols:                              # avoid empty slice errors
+        norm_df      = df_out.iloc[:-1]           # drop grand-total row
+        global_min   = norm_df[norm_bw_cols].min().min()
+        global_max   = norm_df[norm_bw_cols].max().max()
+        global_mid   = np.percentile(norm_df[norm_bw_cols].stack(), 50)
+    else:
+        global_min = global_mid = global_max = 0  # fallback
+
+
     output = io.BytesIO()
+
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
 
         df_out = df_combined.reset_index()
-        
-        
         sheet_name = "Combined"
         df_out.to_excel(writer, sheet_name=sheet_name, startrow=0, startcol=0, index=False)
 
         ws = writer.sheets[sheet_name]
-        n_rows = df_combined.shape[0]
-        n_cols = df_combined.shape[1]
+        
+     #   n_rows = df_combined.shape[0]
+     #   n_cols = df_combined.shape[1]
 
+'''
+        
         color_rule = ColorScaleRule(
             start_type="min", start_color="00FF00",
             mid_type="percentile", mid_value=50, mid_color="FFFF00",
             end_type="max", end_color="FF0000"
-        )
+        )'''
+
+        # Colour scale rule template
+        def make_rule():
+            return ColorScaleRule(
+                start_type="num", start_value=global_min, start_color="00FF00",
+                mid_type="num",   mid_value=global_mid,  mid_color="FFFF00",
+                end_type="num",   end_value=global_max,  end_color="FF0000",
+            )
+
+'''
         for col_idx, col_name in enumerate(df_combined.columns, start=1):
             if col_name.endswith("_BaseWeight") and col_name != "GrandTotal_BaseWeight":
                 excel_col = get_column_letter(col_idx+2)
                 data_first_row = 2
                 data_last_row  = n_rows
                 range_str = f"{excel_col}{data_first_row}:{excel_col}{data_last_row}"
-                ws.conditional_formatting.add(range_str, color_rule)
+                ws.conditional_formatting.add(range_str, color_rule)'''
+
+        # Apply the rule to every real *_BaseWeight column
+        for col_name in norm_bw_cols:
+            col_idx   = df_out.columns.get_loc(col_name) + 1   # 1-based
+            excel_col = get_column_letter(col_idx)
+            first_row = 2                                      # data start
+            last_row  = n_rows + 1                             # inclusive
+            rng       = f"{excel_col}{first_row}:{excel_col}{last_row}"
+            ws.conditional_formatting.add(rng, make_rule())
 
         pivot_population.to_excel(writer, sheet_name="Population")
         pivot_propsample.to_excel(writer, sheet_name="Proportional Sample")
