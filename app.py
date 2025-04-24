@@ -737,6 +737,15 @@ def main():
     }
     params_df = pd.DataFrame(list(param_dict.items()),
                              columns=["Parameter", "Value"])
+    
+    # NEW  ➜  tidy tables for the minimum overrides
+    region_min_df   = pd.DataFrame(dimension_mins["Region"].items(),
+                                   columns=["Region", "Region_Min"])
+    size_min_df     = pd.DataFrame(dimension_mins["Size"].items(),
+                                   columns=["Size", "Size_Min"])
+    industry_min_df = pd.DataFrame(dimension_mins["Industry"].items(),
+                                   columns=["Industry", "Industry_Min"])
+    # ------------------------------------------------------------------
     # ------------------------------------------------------------------
     
     if uploaded_file is not None:
@@ -1075,6 +1084,9 @@ def main():
                     #  Build list of tables to go into the HTML snapshot
                     snapshot_sections = [
                         ("Run Parameters",               params_df),
+                        ("Region-wise Minimum Sample",     region_min_df),     # ← NEW
+                        ("Size-wise Minimum Sample",       size_min_df),       # ← NEW
+                        ("Sector-wise Minimum Sample",     industry_min_df),   # ← NEW
                         ("Panel Sample (with totals)",   pivot_panel),
                         ("Fresh Sample (with totals)",   pivot_fresh),
                         ("Allocated Sample & Base Weights", stcol),        # ← NEW
