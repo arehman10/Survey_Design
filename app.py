@@ -1077,7 +1077,7 @@ def main():
                         ("Run Parameters",               params_df),
                         ("Panel Sample (with totals)",   pivot_panel),
                         ("Fresh Sample (with totals)",   pivot_fresh),
-                       ("Allocated Sample & Base Weights", stcol),        # ← NEW
+                        ("Allocated Sample & Base Weights", stcol),        # ← NEW
                         ("Region-wise Sample Totals",    region_totals),
                         ("Size-wise Sample Totals",      size_totals),
                         ("Proportional Sample",          pivot_propsample),
