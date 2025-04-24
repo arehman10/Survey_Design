@@ -154,7 +154,7 @@ def write_excel_combined_table(df_combined, pivot_population, pivot_propsample):
 #        df_baseweight.to_excel(writer, sheet_name="BaseWeights",
  #                              startrow=0, startcol=0, index=False)
     
-        ws = writer.sheets["BaseWeights"]   # all formatting applies to this sheet
+#        ws = writer.sheets["BaseWeights"]   # all formatting applies to this sheet
 
        # df_out = df_combined.reset_index()
         sheet_name = "Combined"
