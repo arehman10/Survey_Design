@@ -1023,7 +1023,6 @@ def main():
                         file_name="Optimized_Results.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
-                    st.markdown(SAVE_AS_HTML_JS, unsafe_allow_html=True)
 
             except ValueError as e:
                 st.error(str(e))
