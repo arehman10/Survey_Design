@@ -12,8 +12,8 @@ from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm
 import base64
 import streamlit.components.v1 as components
 from datetime import datetime
-
-import base64, tempfile, html
+import textwrap, html
+import base64, tempfile
 
 # If using GLPK:
 import swiglpk as glpk
@@ -27,33 +27,43 @@ def add_grand_total_row(df, key_col_name):
     grand[key_col_name] = "Grand Total"
     # keep the same column order
     return pd.concat([df, grand], ignore_index=True)[df.columns]
-SAVE_AS_HTML_JS = """
-<button id="saveHtmlBtn"
-        style="margin:8px 0;padding:6px 12px;
-               font-weight:600;font-size:14px;
-               color:#fff;background:#3b76ef;
-               border:none;border-radius:4px;cursor:pointer;">
-    💾 Save this page as HTML
-</button>
+HTML_TEMPLATE = textwrap.dedent("""\
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="utf-8">
+      <title>Survey-Design Snapshot</title>
+      <style>
+        body      {{ font-family: Arial, sans-serif; margin: 2rem; }}
+        h2        {{ color:#154360; }}
+        table     {{ border-collapse: collapse; margin-bottom: 1.5rem; width:100%; }}
+        th, td    {{ border: 1px solid #bbb; padding: 4px 6px; font-size: 14px; }}
+        th        {{ background:#eef; }}
+        tr:nth-child(even) td {{ background:#f9f9f9; }}
+        .scrollbox {{ max-height:400px; overflow:auto; border:1px solid #ccc; padding:4px; }}
+      </style>
+    </head>
+    <body>
+      <h1>Survey-Design Snapshot</h1>
+      {body_html}
+    </body>
+    </html>
+""")
 
-<script>
-document.getElementById('saveHtmlBtn').onclick = () => {
-  // 1) grab a complete snapshot
-  const html = '<!DOCTYPE html>' + document.documentElement.outerHTML;
-  // 2) turn it into a downloadable Blob
-  const blob = new Blob([html], {type: 'text/html'});
-  const url  = URL.createObjectURL(blob);
-  // 3) auto-download
-  const a = document.createElement('a');
-  a.href      = url;
-  a.download  = 'SurveyDesign_snapshot.html';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-};
-</script>
-"""
+def dfs_to_html(sections):
+    """
+    sections = [(title, dataframe), ...]
+    Returns bytes of a single HTML file with scrollable <div> around each table.
+    """
+    parts = []
+    for title, df in sections:
+        parts.append(f"<h2>{html.escape(title)}</h2>")
+        parts.append('<div class="scrollbox">')
+        parts.append(df.to_html(index=False, border=0, justify="center"))
+        parts.append("</div>")
+    full = HTML_TEMPLATE.format(body_html="\n".join(parts))
+    return full.encode("utf-8")
+
 
 def compute_n_infinity(z_score, margin_of_error, p):
     return (z_score ** 2) * p * (1 - p) / (margin_of_error ** 2)
@@ -986,6 +996,26 @@ def main():
                         margins=False,
                         sort=False
                     )
+
+                    # -----------------------------------------------------------
+                    #  Build list of tables to go into the HTML snapshot
+                    snapshot_sections = [
+                        ("Panel Sample (with totals)",   pivot_panel),
+                        ("Fresh Sample (with totals)",   pivot_fresh),
+                        ("Allocated Sample & BaseWeights", df_combined.reset_index()),
+                        ("Region-wise Sample Totals",    region_totals),
+                        ("Size-wise Sample Totals",      size_totals),
+                        ("Proportional Sample",          pivot_propsample),
+                    ]
+                    html_bytes = dfs_to_html(snapshot_sections)
+                    
+                    st.download_button(
+                        label="🌐 Download full page as HTML",
+                        data=html_bytes,
+                        file_name="SurveyDesign_snapshot.html",
+                        mime="text/html"
+                    )
+                    # -----------------------------------------------------------
                     excel_data= write_excel_combined_table(df_combined, pivot_pop_unreset, pivot_propsample_unreset)
                     st.download_button(
                         label="Download Excel",
