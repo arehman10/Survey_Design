@@ -14,6 +14,7 @@ import streamlit.components.v1 as components
 from datetime import datetime
 import textwrap, html
 import base64, tempfile
+from pandas.io.formats.style import Styler
 
 # If using GLPK:
 import swiglpk as glpk
@@ -59,7 +60,11 @@ def dfs_to_html(sections):
     for title, df in sections:
         parts.append(f"<h2>{html.escape(title)}</h2>")
         parts.append('<div class="scrollbox">')
-        parts.append(df.to_html(index=False, border=0, justify="center"))
+         if isinstance(obj, Styler):
+            parts.append(obj.to_html())           # keeps colours!
+        else:
+            parts.append(obj.to_html(index=False, border=0, justify="center"))
+      #  parts.append(df.to_html(index=False, border=0, justify="center"))
         parts.append("</div>")
     full = HTML_TEMPLATE.format(body_html="\n".join(parts))
     return full.encode("utf-8")
@@ -1069,9 +1074,10 @@ def main():
                     # -----------------------------------------------------------
                     #  Build list of tables to go into the HTML snapshot
                     snapshot_sections = [
+                        ("Run Parameters",               params_df),
                         ("Panel Sample (with totals)",   pivot_panel),
                         ("Fresh Sample (with totals)",   pivot_fresh),
-                        ("Allocated Sample & BaseWeights", df_combined.reset_index()),
+                       ("Allocated Sample & Base Weights", stcol),        # ← NEW
                         ("Region-wise Sample Totals",    region_totals),
                         ("Size-wise Sample Totals",      size_totals),
                         ("Proportional Sample",          pivot_propsample),
