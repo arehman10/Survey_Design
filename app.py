@@ -118,6 +118,28 @@ def write_excel_combined_table(df_combined, pivot_population, pivot_propsample):
     df_samples    = df_out[id_cols + sample_cols]                   # table 1
     df_baseweight = df_out[id_cols + bw_cols]                       # table 2
     # ----------------------------------------------------------
+
+    # ------------------------------------------------------------
+    #  A) row-level total for each Region–Size cell
+    df_baseweight["SampleCellTotal"] = df_samples[sample_cols].sum(axis=1)
+    
+    #  B) Region-wise totals  (one row per Region)
+    region_totals = (
+        df_samples
+          .groupby("Region")[sample_cols].sum()
+          .sum(axis=1)                      # collapse all industry cols
+          .reset_index(name="SampleRegionTotal")
+    )
+    
+    #  C) Size-wise totals  (one row per Size)
+    size_totals = (
+        df_samples
+          .groupby("Size")[sample_cols].sum()
+          .sum(axis=1)
+          .reset_index(name="SampleSizeTotal")
+    )
+
+
     
     n_rows = df_out.shape[0]
     
@@ -172,6 +194,15 @@ def write_excel_combined_table(df_combined, pivot_population, pivot_propsample):
  #                              startrow=0, startcol=0, index=False)
     
 #        ws = writer.sheets["BaseWeights"]   # all formatting applies to this sheet
+
+        # 2) Append a blank row, then the Region totals, then Size totals
+        start_row = df_baseweight.shape[0] + 2                # one blank line
+        region_totals.to_excel(writer, sheet_name="BaseWeights",
+                               startrow=start_row, startcol=0, index=False)
+        
+        start_row += region_totals.shape[0] + 2               # another gap
+        size_totals.to_excel(writer, sheet_name="BaseWeights",
+                             startrow=start_row, startcol=0, index=False)
 
        # df_out = df_combined.reset_index()
         sheet_name = "Sample_with_baseweight"
