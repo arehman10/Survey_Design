@@ -144,6 +144,7 @@ def write_excel_combined_table(df_combined, pivot_population, pivot_propsample):
     output = io.BytesIO()
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
+         df_out = df_out.drop(columns=["GrandTotal_BaseWeight"], errors="ignore")
 
          # 1) Samples sheet – no colouring needed
         df_samples.to_excel(writer, sheet_name="Samples",
