@@ -97,6 +97,7 @@ def write_excel_combined_table(df_combined, pivot_population, pivot_propsample):
     subset_bw_cols = [c for c in df_out.columns if c.endswith("_BaseWeight")]
     norm_bw_cols   = [c for c in subset_bw_cols
                       if c != "GrandTotal_BaseWeight"]  # exclude total
+    df_out[norm_bw_cols] = df_out[norm_bw_cols].round(1)
 
 
     if norm_bw_cols:                              # avoid empty slice errors
