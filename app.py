@@ -90,8 +90,12 @@ def write_excel_combined_table(df_combined, pivot_population, pivot_propsample):
     """
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
+
+        df_out = df_combined.reset_index()
+        
+        
         sheet_name = "Combined"
-        df_combined.to_excel(writer, sheet_name=sheet_name, startrow=0, startcol=0, index=False)
+        df_out.to_excel(writer, sheet_name=sheet_name, startrow=0, startcol=0, index=False)
 
         ws = writer.sheets[sheet_name]
         n_rows = df_combined.shape[0]
