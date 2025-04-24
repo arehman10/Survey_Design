@@ -906,6 +906,22 @@ def main():
                     # combined
                     # ------------------------------------------------------------------
                     df_combined = create_combined_table_with_totals(df_alloc)
+
+                    id_cols = [c for c in ["Region", "Size"] if c in df_combined.columns]
+
+                    # separate grand-total columns first
+                    gt_sample = [c for c in df_combined.columns if c == "GrandTotal_Sample"]
+                    gt_bw     = [c for c in df_combined.columns if c == "GrandTotal_BaseWeight"]
+                    
+                    sample_cols = [c for c in df_combined.columns
+                                   if c.endswith("_Sample") and c not in gt_sample]
+                    bw_cols     = [c for c in df_combined.columns
+                                   if c.endswith("_BaseWeight") and c not in gt_bw]
+                    
+                    # *** NEW order: Region, Size, GrandTotal_Sample, other Samples, all BaseWeights
+                    new_order = id_cols + gt_sample + sample_cols + bw_cols + gt_bw
+                    df_combined = df_combined[new_order]
+                    
                     
                     # 1) reorder so samples are contiguous, then base-weights
                     id_cols      = [c for c in ["Region", "Size"] if c in df_combined.columns]
@@ -923,10 +939,6 @@ def main():
                     new_order = id_cols + sample_cols + bw_cols + gt_sample + gt_bw
                     df_combined = df_combined[new_order]
                     # ------------------------------------------------------------------
-
-
-
-
 
                     
                     # ⬅️  INSERT THIS LINE
