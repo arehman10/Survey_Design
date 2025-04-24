@@ -905,6 +905,11 @@ def main():
 
                     # combined
                     df_combined= create_combined_table_with_totals(df_alloc)
+                    # ⬅️  INSERT THIS LINE
+                    df_combined[[c for c in df_combined.columns if c.endswith("_BaseWeight")]] \
+                        = df_combined[[c for c in df_combined.columns if c.endswith("_BaseWeight")]].round(1)
+                    # ------------------------------------------------------------------
+
                     df_combined_reset= df_combined.reset_index()
                     st.subheader("Allocated Sample & Base Weights")
 
