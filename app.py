@@ -33,7 +33,7 @@ HTML_TEMPLATE = textwrap.dedent("""\
     <html lang="en">
     <head>
       <meta charset="utf-8">
-      <title>Survey-Design Snapshot</title>
+      <title>{page_title}</title>
       <style>
         body      {{ font-family: Arial, sans-serif; margin: 2rem; }}
         h2        {{ color:#154360; }}
@@ -45,7 +45,7 @@ HTML_TEMPLATE = textwrap.dedent("""\
       </style>
     </head>
     <body>
-      <h1>Survey-Design Snapshot</h1>
+      <h1>{page_title}</h1>
       {body_html}
     </body>
     </html>
@@ -66,7 +66,10 @@ def dfs_to_html(sections):
             parts.append(obj.to_html(index=False, border=0, justify="center"))
       #  parts.append(df.to_html(index=False, border=0, justify="center"))
         parts.append("</div>")
-    full = HTML_TEMPLATE.format(body_html="\n".join(parts))
+    full = HTML_TEMPLATE.format(
+        body_html="\n".join(parts),
+        page_title=html.escape(page_title)
+    )
     return full.encode("utf-8")
 
 
@@ -1117,11 +1120,13 @@ def main():
                         ("Proportional Sample",          pivot_propsample),
                     ]
                     html_bytes = dfs_to_html(snapshot_sections)
+                    snapshot_basename = base_filename       # ← base file name without extension
+                    html_fname        = f"{snapshot_basename}_snapshot.html"
                     
                     st.download_button(
                         label="🌐 Download full page as HTML",
                         data=html_bytes,
-                        file_name="SurveyDesign_snapshot.html",
+                        file_name=html_fname,               # ← use the new name here
                         mime="text/html"
                     )
                     # -----------------------------------------------------------
