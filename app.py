@@ -51,7 +51,7 @@ HTML_TEMPLATE = textwrap.dedent("""\
     </html>
 """)
 
-def dfs_to_html(sections, page_title="Snapshot")):
+def dfs_to_html(sections, page_title="Snapshot"):
     """
     sections = [(title, dataframe), ...]
     Returns bytes of a single HTML file with scrollable <div> around each table.
