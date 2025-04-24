@@ -200,13 +200,13 @@ def write_excel_combined_table(df_combined, pivot_population, pivot_propsample):
         sheet_name = "Sample_with_baseweight"
 
          # 2) Append a blank row, then the Region totals, then Size totals
-        start_row = df_combined.shape[0] + 2                # one blank line
-        region_totals.to_excel(writer, sheet_name="Sample_with_baseweight",
-                               startrow=start_row, startcol=0, index=False)
+   #     start_row = df_combined.shape[0] + 2                # one blank line
+   #     region_totals.to_excel(writer, sheet_name="Sample_with_baseweight",
+   #                            startrow=start_row, startcol=0, index=False)
         
-        start_row += region_totals.shape[0] + 2               # another gap
-        size_totals.to_excel(writer, sheet_name="Sample_with_baseweight",
-                             startrow=start_row, startcol=0, index=False)
+   #     start_row += region_totals.shape[0] + 2               # another gap
+   #     size_totals.to_excel(writer, sheet_name="Sample_with_baseweight",
+   #                          startrow=start_row, startcol=0, index=False)
 
         df_out.to_excel(writer, sheet_name=sheet_name, startrow=0, startcol=0, index=False)
 
