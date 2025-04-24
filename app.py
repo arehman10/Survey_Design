@@ -108,7 +108,7 @@ def write_excel_combined_table(df_combined, pivot_population, pivot_propsample):
         )
         for col_idx, col_name in enumerate(df_combined.columns, start=1):
             if col_name.strip().endswith("_BaseWeight"):
-                excel_col = get_column_letter(col_idx)
+                excel_col = get_column_letter(col_idx-1)
                 data_first_row = 2
                 data_last_row  = n_rows + 1
                 range_str = f"{excel_col}{data_first_row}:{excel_col}{data_last_row}"
