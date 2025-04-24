@@ -717,6 +717,23 @@ def main():
     uploaded_file= st.file_uploader("Upload Excel with 'panel','fresh'", type=["xlsx"])
     dimension_mins= {"Region":{}, "Size":{}, "Industry":{}}
 
+
+    param_dict = {
+        "Total Sample"          : total_sample,
+        "Min Cell Size"         : min_cell_size,
+        "Max Cell Size"         : max_cell_size,
+        "Max Base Weight"       : max_base_weight,
+        "Solver"                : solver_choice,
+        "Conversion Rate"       : conversion_rate,
+        "Use sum(panel,fresh)"  : use_sum_universe,
+        "Z-Score"               : z_score,
+        "Margin of Error"       : margin_of_error,
+        "p (Population Prop.)"  : p,
+    }
+    params_df = pd.DataFrame(list(param_dict.items()),
+                             columns=["Parameter", "Value"])
+    # ------------------------------------------------------------------
+    
     if uploaded_file is not None:
         # Update the title based on the file name
         
