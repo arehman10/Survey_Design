@@ -748,6 +748,15 @@ def main():
                                    columns=["Size", "Size_Min"])
     industry_min_df = pd.DataFrame(dimension_mins["Industry"].items(),
                                    columns=["Industry", "Industry_Min"])
+
+    st.subheader("Region-wise Minimum Sample")
+    st.data_editor(region_min_df, use_container_width=True)
+    
+    st.subheader("Size-wise Minimum Sample")
+    st.data_editor(size_min_df, use_container_width=True)
+    
+    st.subheader("Sector-wise Minimum Sample")
+    st.data_editor(industry_min_df, use_container_width=True)
     # ------------------------------------------------------------------
     # ------------------------------------------------------------------
     
