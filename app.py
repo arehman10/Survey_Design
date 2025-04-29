@@ -759,25 +759,6 @@ def main():
                 else:
                     df_adjusted[c] = np.maximum(df_panel_wide[c].fillna(0), df_fresh_wide[c].fillna(0))
 
-
-        # ── ADD PER-ROW TOTAL COLUMN ─────────────────────────────────────────────────
-        id_cols    = ["Region", "Size"]
-        value_cols = [col for col in df_adjusted.columns if col not in id_cols]
-        df_adjusted["Total"] = df_adjusted[value_cols].sum(axis=1)
-        # ── END ROW TOTAL ────────────────────────────────────────────────────────────
-
-        # ── APPEND GRAND-TOTAL ROW ────────────────────────────────────────────────────
-        # sum across every numeric column (including the new "Total")
-        grand = df_adjusted[value_cols + ["Total"]].sum(numeric_only=True)
-        grand_row = {col: grand[col] for col in value_cols + ["Total"]}
-        grand_row["Region"] = "Grand Total"
-        grand_row["Size"]   = ""
-        df_adjusted = pd.concat(
-            [df_adjusted, pd.DataFrame([grand_row])],
-            ignore_index=True,
-        )
-        # ── END GRAND-TOTAL ─────────────────────────────────────────────────────────
-
         st.subheader("Adjusted Universe Table")
         st.data_editor(df_adjusted, use_container_width=True, key = "adjusted_universe")
 
@@ -857,11 +838,8 @@ def main():
 
         if st.button("Run Optimization"):
             try:
-                # ── exclude the Grand Total row from optimization ────────────────────
-                df_for_opt = df_adjusted[df_adjusted["Region"] != "Grand Total"].copy()
-                # ── run solver on the filtered universe ─────────────────────────────
                 df_long_final, df_cell_conf, df_dim_conf, solverinfo = run_optimization(
-                    df_wide= df_for_opt,
+                    df_wide= df_adjusted,
                     total_sample= total_sample,
                     min_cell_size= min_cell_size,
                     max_cell_size= max_cell_size,
