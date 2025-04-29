@@ -758,6 +758,24 @@ def main():
                     df_adjusted[c] = df_panel_wide[c].fillna(0) + df_fresh_wide[c].fillna(0)
                 else:
                     df_adjusted[c] = np.maximum(df_panel_wide[c].fillna(0), df_fresh_wide[c].fillna(0))
+        # ── ADD GRAND TOTAL ROW HERE ───────────────────────────────────────────            
+        id_cols = ["Region", "Size"]
+        value_cols = [c for c in df_adjusted.columns if c not in id_cols]
+
+        # Sum each industry column
+        grand = df_adjusted[value_cols].sum(numeric_only=True)
+
+        # Build a dict for the new row
+        grand_row = {col: grand[col] for col in value_cols}
+        grand_row["Region"] = "Grand Total"
+        grand_row["Size"]   = ""
+
+        # Append it
+        df_adjusted = pd.concat(
+            [df_adjusted, pd.DataFrame([grand_row])],
+            ignore_index=True,
+        )
+        # ── end insertion ───────────────────────────────────────────────────────           
 
         st.subheader("Adjusted Universe Table")
         st.data_editor(df_adjusted, use_container_width=True, key = "adjusted_universe")
