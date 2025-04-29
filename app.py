@@ -857,9 +857,11 @@ def main():
 
         if st.button("Run Optimization"):
             try:
-                # run solver
-                df_long_final, df_cell_conf, df_dim_conf, solverinfo= run_optimization(
-                    df_wide= df_adjusted,
+                # ── exclude the Grand Total row from optimization ────────────────────
+                df_for_opt = df_adjusted[df_adjusted["Region"] != "Grand Total"].copy()
+                # ── run solver on the filtered universe ─────────────────────────────
+                df_long_final, df_cell_conf, df_dim_conf, solverinfo = run_optimization(
+                    df_wide= df_for_opt,
                     total_sample= total_sample,
                     min_cell_size= min_cell_size,
                     max_cell_size= max_cell_size,
