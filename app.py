@@ -838,7 +838,8 @@ def main():
 
         if st.button("Run Optimization"):
             try:
-                df_long_final, df_cell_conf, df_dim_conf, solverinfo = run_optimization(
+                # run solver
+                df_long_final, df_cell_conf, df_dim_conf, solverinfo= run_optimization(
                     df_wide= df_adjusted,
                     total_sample= total_sample,
                     min_cell_size= min_cell_size,
