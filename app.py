@@ -858,12 +858,12 @@ def main():
         with colA:
             st.subheader("Set A Results")
             st.markdown(f"**Solver:** {solA}")
-            st.data_editor(panelA, use_container_width=True)
+            st.data_editor(panelA, use_container_width=True, key="panelA_editor")
             st.dataframe(combA.style.apply(style_bwcol, axis=1))
         with colB:
             st.subheader("Set B Results")
             st.markdown(f"**Solver:** {solB}")
-            st.data_editor(panelB, use_container_width=True)
+            st.data_editor(panelB, use_container_width=True, key="panelB_editor")
             st.dataframe(combB.style.apply(style_bwcol, axis=1))
 
         # Δ comparison
