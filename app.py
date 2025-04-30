@@ -748,86 +748,82 @@ def diff_tables(pivot_a: pd.DataFrame, pivot_b: pd.DataFrame, label: str):
 # --------------------------------------------------------------------------
 #  MAIN APP – Dual Design Version (UI tweak)
 # --------------------------------------------------------------------------
+# ------------------------------- MAIN APP ---------------------------------
 
 def main():
     st.set_page_config(page_title="Survey Design Optimizer – Compare Designs", layout="wide")
     st.title("Survey Design Optimizer – Compare Two Designs")
 
-    # --- Upload input file
     uploaded = st.file_uploader("Upload Excel (sheets: 'panel', 'fresh')", type=["xlsx"])
     if not uploaded:
         st.info("Please upload the Excel file to proceed.")
         return
+
     df_panel = pd.read_excel(uploaded, sheet_name="panel")
     df_fresh = pd.read_excel(uploaded, sheet_name="fresh")
 
-    # --- Adjusted‑universe builder
     id_cols = ["Region", "Size"]
-    industry_cols = [c for c in df_panel.columns if c not in id_cols]
-    def make_universe(use_sum):
-        df_ad = df_panel.copy()
-        for c in industry_cols:
-            if c in df_fresh.columns:
-                df_ad[c] = df_panel[c].fillna(0) + df_fresh[c].fillna(0) if use_sum else np.maximum(df_panel[c].fillna(0), df_fresh[c].fillna(0))
-        return df_ad
+    ind_cols = [c for c in df_panel.columns if c not in id_cols]
 
-    # --- Sidebar parameters for both designs
+    def make_univ(use_sum):
+        df_u = df_panel.copy()
+        for c in ind_cols:
+            if c in df_fresh.columns:
+                df_u[c] = df_panel[c].fillna(0) + df_fresh[c].fillna(0) if use_sum else np.maximum(df_panel[c].fillna(0), df_fresh[c].fillna(0))
+        return df_u
+
     defaults = {"Total Sample":1000, "Min Cell Size":4, "Max Cell Size":40, "Max Base Weight":600, "Conversion Rate":0.3, "Z":1.644853627, "MoE":0.075, "p":0.5}
     pA = sidebar_param_block("Design A", defaults, "A")
     pB = sidebar_param_block("Design B", defaults, "B")
 
-    # --- Dimension minimums
-    univA, univB = make_universe(pA["UseSumUniverse"]), make_universe(pB["UseSumUniverse"])
-    minsA = dim_minimums(univA, industry_cols, pA, "A")
-    minsB = dim_minimums(univB, industry_cols, pB, "B")
+    univA, univB = make_univ(pA["UseSumUniverse"]), make_univ(pB["UseSumUniverse"])
+    minsA, minsB = dim_minimums(univA, ind_cols, pA, "A"), dim_minimums(univB, ind_cols, pB, "B")
 
     if not st.button("🚀 Run optimisation for both designs"):
         return
 
-    # --- Run solver for each design
-    res = {}
-    for lbl, df_adj, prm, dm in [("A", univA, pA, minsA), ("B", univB, pB, minsB)]:
-        df_long, *_ = run_optimization(df_adj, prm["Total Sample"], prm["Min Cell Size"], prm["Max Cell Size"], prm["Max Base Weight"], prm["Solver"], dm, prm["Conversion Rate"])
+    results = {}
+    for lbl, df_adj, prm, dmn in [("A", univA, pA, minsA), ("B", univB, pB, minsB)]:
+        df_long, *_ = run_optimization(df_adj, prm["Total Sample"], prm["Min Cell Size"], prm["Max Cell Size"], prm["Max Base Weight"], prm["Solver"], dmn, prm["Conversion Rate"])
         if df_long is None:
-            st.error(f"Design {lbl} infeasible – adjust minimums/params.")
+            st.error(f"Design {lbl} infeasible – adjust parameters or minimums.")
             return
-        res_alloc = allocate_panel_fresh(df_long, df_panel, df_fresh)
-        res[lbl] = {
-            "alloc": res_alloc,
-            "combined": create_combined_table_with_totals(res_alloc)
-        }
+        df_alloc = allocate_panel_fresh(df_long, df_panel, df_fresh)
+        combined = create_combined_table_with_totals(df_alloc)
+        num_cols = combined.select_dtypes(include="number").columns
+        combined[num_cols] = combined[num_cols].round(0).astype("Int64")
+        results[lbl] = combined
 
-    # --- Tabs: A, B, Comparison
+    # -------------------- DISPLAY --------------------
     tabA, tabB, tabC = st.tabs(["Design A", "Design B", "Comparison"])
     with tabA:
-        st.dataframe(res["A"]["combined"])
+        st.dataframe(results["A"])
     with tabB:
-        st.dataframe(res["B"]["combined"])
+        st.dataframe(results["B"])
     with tabC:
-        st.header("Side‑by‑Side View")
         col1, col2 = st.columns(2)
         with col1:
             st.subheader("Design A")
-            st.dataframe(res["A"]["combined"])
+            st.dataframe(results["A"])
         with col2:
             st.subheader("Design B")
-            st.dataframe(res["B"]["combined"])
+            st.dataframe(results["B"])
 
-    # --- Snapshot & Excel (keep diff sheet for advanced users)
-    sections = [("Allocated Sample & BW (A)", res["A"]["combined"]), ("Allocated Sample & BW (B)", res["B"]["combined"])]
+    # -------------------- DOWNLOADS ------------------
+    sections = [("Allocated Sample & BaseWeights (A)", results["A"]), ("Allocated Sample & BaseWeights (B)", results["B"])]
     html_bytes = dfs_to_html(sections, page_title="SurveyDesign_Comparison")
     st.download_button("🌐 Download HTML Snapshot", html_bytes, "survey_design_comparison.html", mime="text/html")
 
-    wb = io.BytesIO()
-    with pd.ExcelWriter(wb, engine="openpyxl") as xl:
-        res["A"]["combined"].to_excel(xl, sheet_name="Combined_A")
-        res["B"]["combined"].to_excel(xl, sheet_name="Combined_B")
-        diff_df = res["B"]["combined"].copy()
-        numcols = [c for c in diff_df.columns if diff_df[c].dtype != "O"]
-        diff_df[numcols] = res["B"]["combined"][numcols] - res["A"]["combined"][numcols]
-        diff_df.to_excel(xl, sheet_name="Diff_B_minus_A")
-    wb.seek(0)
-    st.download_button("📊 Download Excel (Both Designs)", wb, "survey_design_comparison.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    out = io.BytesIO()
+    with pd.ExcelWriter(out, engine="openpyxl") as xl:
+        results["A"].to_excel(xl, sheet_name="Combined_A", index=False)
+        results["B"].to_excel(xl, sheet_name="Combined_B", index=False)
+        diff = results["B"].copy()
+        num = diff.select_dtypes(include="number").columns
+        diff[num] = results["B"][num].fillna(0) - results["A"][num].fillna(0)
+        diff.to_excel(xl, sheet_name="Diff_B_minus_A", index=False)
+    out.seek(0)
+    st.download_button("📊 Download Excel (Both Designs)", out, "survey_design_comparison.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 if __name__ == "__main__":
