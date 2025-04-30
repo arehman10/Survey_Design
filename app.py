@@ -689,55 +689,43 @@ def pivot_in_original_order(df_alloc, df_original_wide, col_for_alloc):
 #  NEW  ➜  Small Utilities
 # --------------------------------------------------------------------------
 
+
 def sidebar_param_block(label: str, default_vals: dict, key_suffix: str):
-    """Render one parameter‑block inside an *st.expander*.
-        *default_vals* gives starting values shared by both designs.
-        Returns a dict with the chosen values (numeric where appropriate).
-    """
     with st.sidebar.expander(f"{label} Parameters", expanded=(label == "Design A")):
         p = {}
-        p["Total Sample"]   = st.number_input("Total Sample",  value=default_vals["Total Sample"],   key=f"sample_{key_suffix}")
+        p["Total Sample"]    = st.number_input("Total Sample",  value=default_vals["Total Sample"],   key=f"sample_{key_suffix}")
         p["Min Cell Size"]   = st.number_input("Min Cell Size", value=default_vals["Min Cell Size"], key=f"mincell_{key_suffix}")
         p["Max Cell Size"]   = st.number_input("Max Cell Size", value=default_vals["Max Cell Size"], key=f"maxcell_{key_suffix}")
         p["Max Base Weight"] = st.number_input("Max Base Weight",value=default_vals["Max Base Weight"],key=f"bw_{key_suffix}")
-        p["Solver"]         = st.selectbox("Solver", ["SCIP","ECOS_BB"],              key=f"solver_{key_suffix}")
+        p["Solver"]          = st.selectbox("Solver", ["SCIP","ECOS_BB"],              key=f"solver_{key_suffix}")
         p["Conversion Rate"] = st.number_input("Conversion Rate", value=default_vals["Conversion Rate"], step=0.01, key=f"conv_{key_suffix}")
         st.markdown("---")
         st.markdown("**Sample‑size formula inputs**")
-        p["Z"] = st.number_input("Z‑score",         value=default_vals["Z"],  key=f"z_{key_suffix}")
-        p["MoE"] = st.number_input("Margin of Error", value=default_vals["MoE"], key=f"moe_{key_suffix}")
+        p["Z"]   = st.number_input("Z‑score",           value=default_vals["Z"],  key=f"z_{key_suffix}")
+        p["MoE"] = st.number_input("Margin of Error",   value=default_vals["MoE"], key=f"moe_{key_suffix}")
         p["p"]   = st.number_input("p (population prop.)", value=default_vals["p"],  key=f"p_{key_suffix}")
         p["UseSumUniverse"] = st.checkbox("Use sum(panel,fresh) universe", value=False, key=f"sumuni_{key_suffix}")
     return p
 
 
 def dim_minimums(df_adjusted: pd.DataFrame, inds: list, params: dict, key_sfx: str):
-    """Build a dict of minimums for Region/Size/Industry using the
-       sample‑size formula, allowing overrides via widgets."""
     z, moe, p = params["Z"], params["MoE"], params["p"]
     n_inf = compute_n_infinity(z, moe, p)
-
     dmins = {"Region": {}, "Size": {}, "Industry": {}}
-    with st.sidebar.expander(f"Dimension Minimum Overrides – {key_sfx}"):
+    with st.sidebar.expander(f"Dimension Minimum Overrides – {key_sfx}"):
         st.write("Defaults follow FPC formula. Override if needed.")
-        # Region
         st.markdown("**By Region**")
         for r in df_adjusted["Region"].dropna().unique():
             pop_r = df_adjusted.loc[df_adjusted["Region"] == r, inds].fillna(0).sum().sum()
-            def_min = int(round(compute_fpc_min(pop_r, n_inf)))
-            dmins["Region"][r] = st.number_input(f"Min sample – Region {r}", 0, value=def_min, step=1, key=f"rmin_{r}_{key_sfx}")
-        # Size
+            dmins["Region"][r] = st.number_input(f"Min sample – Region {r}", 0, value=int(round(compute_fpc_min(pop_r, n_inf))), step=1, key=f"rmin_{r}_{key_sfx}")
         st.markdown("**By Size**")
         for s in df_adjusted["Size"].dropna().unique():
             pop_s = df_adjusted.loc[df_adjusted["Size"] == s, inds].fillna(0).sum().sum()
-            def_min = int(round(compute_fpc_min(pop_s, n_inf)))
-            dmins["Size"][s] = st.number_input(f"Min sample – Size {s}", 0, value=def_min, step=1, key=f"szmin_{s}_{key_sfx}")
-        # Industry
+            dmins["Size"][s] = st.number_input(f"Min sample – Size {s}", 0, value=int(round(compute_fpc_min(pop_s, n_inf))), step=1, key=f"szmin_{s}_{key_sfx}")
         st.markdown("**By Industry**")
         for ind in inds:
             pop_i = df_adjusted[ind].fillna(0).sum()
-            def_min = int(round(compute_fpc_min(pop_i, n_inf)))
-            dmins["Industry"][ind] = st.number_input(f"Min sample – Industry {ind}", 0, value=def_min, step=1, key=f"imin_{ind}_{key_sfx}")
+            dmins["Industry"][ind] = st.number_input(f"Min sample – Industry {ind}", 0, value=int(round(compute_fpc_min(pop_i, n_inf))), step=1, key=f"imin_{ind}_{key_sfx}")
     return dmins
 
 
@@ -758,159 +746,89 @@ def diff_tables(pivot_a: pd.DataFrame, pivot_b: pd.DataFrame, label: str):
 # 6) MAIN APP
 ###############################################################################
 # --------------------------------------------------------------------------
-#  MAIN APP – Dual Design Version
+#  MAIN APP – Dual Design Version (UI tweak)
 # --------------------------------------------------------------------------
 
 def main():
     st.set_page_config(page_title="Survey Design Optimizer – Compare Designs", layout="wide")
     st.title("Survey Design Optimizer – Compare Two Designs")
 
-    # ------------------------------------------------------------------
-    #  Upload input file (panel + fresh)
-    # ------------------------------------------------------------------
-    uploaded_file = st.file_uploader("Upload Excel (sheets: 'panel', 'fresh')", type=["xlsx"])
-    if uploaded_file is None:
+    # --- Upload input file
+    uploaded = st.file_uploader("Upload Excel (sheets: 'panel', 'fresh')", type=["xlsx"])
+    if not uploaded:
         st.info("Please upload the Excel file to proceed.")
-        st.stop()
+        return
+    df_panel = pd.read_excel(uploaded, sheet_name="panel")
+    df_fresh = pd.read_excel(uploaded, sheet_name="fresh")
 
-    df_panel = pd.read_excel(uploaded_file, sheet_name="panel")
-    df_fresh = pd.read_excel(uploaded_file, sheet_name="fresh")
-
-    # ------------------------------------------------------------------
-    #  Build adjusted universe once (per design we may choose max vs sum)
-    # ------------------------------------------------------------------
+    # --- Adjusted‑universe builder
     id_cols = ["Region", "Size"]
     industry_cols = [c for c in df_panel.columns if c not in id_cols]
-
-    def adjusted_universe(use_sum: bool):
-        df_adj = df_panel.copy()
+    def make_universe(use_sum):
+        df_ad = df_panel.copy()
         for c in industry_cols:
             if c in df_fresh.columns:
-                if use_sum:
-                    df_adj[c] = df_panel[c].fillna(0) + df_fresh[c].fillna(0)
-                else:
-                    df_adj[c] = np.maximum(df_panel[c].fillna(0), df_fresh[c].fillna(0))
-        return df_adj
+                df_ad[c] = df_panel[c].fillna(0) + df_fresh[c].fillna(0) if use_sum else np.maximum(df_panel[c].fillna(0), df_fresh[c].fillna(0))
+        return df_ad
 
-    # ------------------------------------------------------------------
-    #  Sidebar – collect TWO parameter sets
-    # ------------------------------------------------------------------
-    defaults = {"Total Sample":1000, "Min Cell Size":4, "Max Cell Size":40,
-                "Max Base Weight":600, "Conversion Rate":0.3,
-                "Z":1.644853627, "MoE":0.075, "p":0.5}
+    # --- Sidebar parameters for both designs
+    defaults = {"Total Sample":1000, "Min Cell Size":4, "Max Cell Size":40, "Max Base Weight":600, "Conversion Rate":0.3, "Z":1.644853627, "MoE":0.075, "p":0.5}
+    pA = sidebar_param_block("Design A", defaults, "A")
+    pB = sidebar_param_block("Design B", defaults, "B")
 
-    params_A = sidebar_param_block("Design A", defaults, "A")
-    params_B = sidebar_param_block("Design B", defaults, "B")
+    # --- Dimension minimums
+    univA, univB = make_universe(pA["UseSumUniverse"]), make_universe(pB["UseSumUniverse"])
+    minsA = dim_minimums(univA, industry_cols, pA, "A")
+    minsB = dim_minimums(univB, industry_cols, pB, "B")
 
-    # ------------------------------------------------------------------
-    #  Collect dimension minimums per design
-    # ------------------------------------------------------------------
-    df_univ_A = adjusted_universe(params_A["UseSumUniverse"])
-    df_univ_B = adjusted_universe(params_B["UseSumUniverse"])
+    if not st.button("🚀 Run optimisation for both designs"):
+        return
 
-    dimmins_A = dim_minimums(df_univ_A, industry_cols, params_A, "A")
-    dimmins_B = dim_minimums(df_univ_B, industry_cols, params_B, "B")
+    # --- Run solver for each design
+    res = {}
+    for lbl, df_adj, prm, dm in [("A", univA, pA, minsA), ("B", univB, pB, minsB)]:
+        df_long, *_ = run_optimization(df_adj, prm["Total Sample"], prm["Min Cell Size"], prm["Max Cell Size"], prm["Max Base Weight"], prm["Solver"], dm, prm["Conversion Rate"])
+        if df_long is None:
+            st.error(f"Design {lbl} infeasible – adjust minimums/params.")
+            return
+        res_alloc = allocate_panel_fresh(df_long, df_panel, df_fresh)
+        res[lbl] = {
+            "alloc": res_alloc,
+            "combined": create_combined_table_with_totals(res_alloc)
+        }
 
-    # ------------------------------------------------------------------
-    #  Run button
-    # ------------------------------------------------------------------
-    if not st.button("🚀 Run Optimisation for Both Designs"):
-        st.stop()
+    # --- Tabs: A, B, Comparison
+    tabA, tabB, tabC = st.tabs(["Design A", "Design B", "Comparison"])
+    with tabA:
+        st.dataframe(res["A"]["combined"])
+    with tabB:
+        st.dataframe(res["B"]["combined"])
+    with tabC:
+        st.header("Side‑by‑Side View")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader("Design A")
+            st.dataframe(res["A"]["combined"])
+        with col2:
+            st.subheader("Design B")
+            st.dataframe(res["B"]["combined"])
 
-    # ------------------------------------------------------------------
-    #  Solve for Design A & Design B
-    # ------------------------------------------------------------------
-    results = {}
-    for label, df_adj, prm, dmins in [("A", df_univ_A, params_A, dimmins_A), ("B", df_univ_B, params_B, dimmins_B)]:
-        try:
-            df_long, _, _, solver_used = run_optimization(df_adj,
-                                                          prm["Total Sample"],
-                                                          prm["Min Cell Size"],
-                                                          prm["Max Cell Size"],
-                                                          prm["Max Base Weight"],
-                                                          prm["Solver"],
-                                                          dmins,
-                                                          prm["Conversion Rate"])
-            if df_long is None:
-                st.error(f"Design {label}: infeasible – see sidebar mins.")
-                st.stop()
-            df_alloc = allocate_panel_fresh(df_long, df_panel, df_fresh)
-            results[label] = {"alloc": df_alloc, "params": prm, "solver": solver_used, "mins": dmins, "adj": df_adj}
-        except Exception as e:
-            st.error(f"Design {label} failed: {e}")
-            st.stop()
-
-    # ------------------------------------------------------------------
-    #  Build pivot tables & combineds
-    # ------------------------------------------------------------------
-    def pivots(df_alloc):
-        piv_panel = pd.pivot_table(df_alloc, index=["Region","Size"], columns="Industry",
-                                   values="PanelAllocated", aggfunc="sum", fill_value=0, margins=True, margins_name="GrandTotal", sort=False).reset_index()
-        piv_fresh = pd.pivot_table(df_alloc, index=["Region","Size"], columns="Industry",
-                                   values="FreshAllocated", aggfunc="sum", fill_value=0, margins=True, margins_name="GrandTotal", sort=False).reset_index()
-        return piv_panel, piv_fresh
-
-    for lbl in ("A","B"):
-        piv_p, piv_f = pivots(results[lbl]["alloc"])
-        results[lbl]["pivot_panel"] = piv_p
-        results[lbl]["pivot_fresh"] = piv_f
-        results[lbl]["combined"] = create_combined_table_with_totals(results[lbl]["alloc"])
-
-    # ------------------------------------------------------------------
-    #  UI – Tabs for A, B, Comparison
-    # ------------------------------------------------------------------
-    tab_A, tab_B, tab_cmp = st.tabs(["Design A", "Design B", "Comparison"])
-
-    # --- helper to render one design
-    def render_design(tab, lbl):
-        with tab:
-            st.header(f"Design {lbl}  –  Solver: {results[lbl]['solver']}")
-            st.subheader("Panel Allocation")
-            st.dataframe(results[lbl]["pivot_panel"])
-            st.subheader("Fresh Allocation")
-            st.dataframe(results[lbl]["pivot_fresh"])
-            st.subheader("Sample & BaseWeights (combined)")
-            st.dataframe(results[lbl]["combined"])
-
-    render_design(tab_A, "A")
-    render_design(tab_B, "B")
-
-    # --- Comparison tab
-    with tab_cmp:
-        st.header("Difference  (Design B minus Design A)")
-        diff_label, diff_style = diff_tables(results["A"]["combined"], results["B"]["combined"], "Sample/BaseWeight Diff")
-        st.dataframe(diff_style)
-
-    # ------------------------------------------------------------------
-    #  Downloads – HTML & Excel
-    # ------------------------------------------------------------------
-    sections = []
-    for lbl in ("A","B"):
-        sections.append((f"Run Parameters ({lbl})", pd.DataFrame(list(results[lbl]["params"].items()), columns=["Parameter","Value"])))
-        sections.append((f"Adjusted Universe ({lbl})", results[lbl]["adj"]))
-        sections.append((f"Allocated Sample & BW ({lbl})", results[lbl]["combined"]))
-    sections.append(diff_label, diff_style)  # comparison at the end
-
+    # --- Snapshot & Excel (keep diff sheet for advanced users)
+    sections = [("Allocated Sample & BW (A)", res["A"]["combined"]), ("Allocated Sample & BW (B)", res["B"]["combined"])]
     html_bytes = dfs_to_html(sections, page_title="SurveyDesign_Comparison")
     st.download_button("🌐 Download HTML Snapshot", html_bytes, "survey_design_comparison.html", mime="text/html")
 
-    # -- Excel workbook
-    #   Each design gets its own combined table sheet; plus a diff sheet
     wb = io.BytesIO()
     with pd.ExcelWriter(wb, engine="openpyxl") as xl:
-        for lbl in ("A","B"):
-            results[lbl]["combined"].to_excel(xl, sheet_name=f"Combined_{lbl}")
-            results[lbl]["pivot_panel"].to_excel(xl, sheet_name=f"Panel_{lbl}")
-            results[lbl]["pivot_fresh"].to_excel(xl, sheet_name=f"Fresh_{lbl}")
-        # diff sheet (samples only)
-        diff_df = results["B"]["combined"].copy()
-        num_cols = [c for c in diff_df.columns if diff_df[c].dtype != 'O']
-        diff_df[num_cols] = results["B"]["combined"][num_cols] - results["A"]["combined"][num_cols]
+        res["A"]["combined"].to_excel(xl, sheet_name="Combined_A")
+        res["B"]["combined"].to_excel(xl, sheet_name="Combined_B")
+        diff_df = res["B"]["combined"].copy()
+        numcols = [c for c in diff_df.columns if diff_df[c].dtype != "O"]
+        diff_df[numcols] = res["B"]["combined"][numcols] - res["A"]["combined"][numcols]
         diff_df.to_excel(xl, sheet_name="Diff_B_minus_A")
     wb.seek(0)
     st.download_button("📊 Download Excel (Both Designs)", wb, "survey_design_comparison.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
-# --------------------------------------------------------------------------
 if __name__ == "__main__":
     main()
