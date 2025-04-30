@@ -685,499 +685,232 @@ def pivot_in_original_order(df_alloc, df_original_wide, col_for_alloc):
             df_out.at[i, c]= alloc_dict.get((reg, sz, c), 0)
     return df_out
 
+# --------------------------------------------------------------------------
+#  NEW  ➜  Small Utilities
+# --------------------------------------------------------------------------
+
+def sidebar_param_block(label: str, default_vals: dict, key_suffix: str):
+    """Render one parameter‑block inside an *st.expander*.
+        *default_vals* gives starting values shared by both designs.
+        Returns a dict with the chosen values (numeric where appropriate).
+    """
+    with st.sidebar.expander(f"{label} Parameters", expanded=(label == "Design A")):
+        p = {}
+        p["Total Sample"]   = st.number_input("Total Sample",  value=default_vals["Total Sample"],   key=f"sample_{key_suffix}")
+        p["Min Cell Size"]   = st.number_input("Min Cell Size", value=default_vals["Min Cell Size"], key=f"mincell_{key_suffix}")
+        p["Max Cell Size"]   = st.number_input("Max Cell Size", value=default_vals["Max Cell Size"], key=f"maxcell_{key_suffix}")
+        p["Max Base Weight"] = st.number_input("Max Base Weight",value=default_vals["Max Base Weight"],key=f"bw_{key_suffix}")
+        p["Solver"]         = st.selectbox("Solver", ["SCIP","ECOS_BB"],              key=f"solver_{key_suffix}")
+        p["Conversion Rate"] = st.number_input("Conversion Rate", value=default_vals["Conversion Rate"], step=0.01, key=f"conv_{key_suffix}")
+        st.markdown("---")
+        st.markdown("**Sample‑size formula inputs**")
+        p["Z"] = st.number_input("Z‑score",         value=default_vals["Z"],  key=f"z_{key_suffix}")
+        p["MoE"] = st.number_input("Margin of Error", value=default_vals["MoE"], key=f"moe_{key_suffix}")
+        p["p"]   = st.number_input("p (population prop.)", value=default_vals["p"],  key=f"p_{key_suffix}")
+        p["UseSumUniverse"] = st.checkbox("Use sum(panel,fresh) universe", value=False, key=f"sumuni_{key_suffix}")
+    return p
+
+
+def dim_minimums(df_adjusted: pd.DataFrame, inds: list, params: dict, key_sfx: str):
+    """Build a dict of minimums for Region/Size/Industry using the
+       sample‑size formula, allowing overrides via widgets."""
+    z, moe, p = params["Z"], params["MoE"], params["p"]
+    n_inf = compute_n_infinity(z, moe, p)
+
+    dmins = {"Region": {}, "Size": {}, "Industry": {}}
+    with st.sidebar.expander(f"Dimension Minimum Overrides – {key_sfx}"):
+        st.write("Defaults follow FPC formula. Override if needed.")
+        # Region
+        st.markdown("**By Region**")
+        for r in df_adjusted["Region"].dropna().unique():
+            pop_r = df_adjusted.loc[df_adjusted["Region"] == r, inds].fillna(0).sum().sum()
+            def_min = int(round(compute_fpc_min(pop_r, n_inf)))
+            dmins["Region"][r] = st.number_input(f"Min sample – Region {r}", 0, value=def_min, step=1, key=f"rmin_{r}_{key_sfx}")
+        # Size
+        st.markdown("**By Size**")
+        for s in df_adjusted["Size"].dropna().unique():
+            pop_s = df_adjusted.loc[df_adjusted["Size"] == s, inds].fillna(0).sum().sum()
+            def_min = int(round(compute_fpc_min(pop_s, n_inf)))
+            dmins["Size"][s] = st.number_input(f"Min sample – Size {s}", 0, value=def_min, step=1, key=f"szmin_{s}_{key_sfx}")
+        # Industry
+        st.markdown("**By Industry**")
+        for ind in inds:
+            pop_i = df_adjusted[ind].fillna(0).sum()
+            def_min = int(round(compute_fpc_min(pop_i, n_inf)))
+            dmins["Industry"][ind] = st.number_input(f"Min sample – Industry {ind}", 0, value=def_min, step=1, key=f"imin_{ind}_{key_sfx}")
+    return dmins
+
+
+# --------------------------------------------------------------------------
+#  NEW  ➜  Comparison helpers
+# --------------------------------------------------------------------------
+
+def diff_tables(pivot_a: pd.DataFrame, pivot_b: pd.DataFrame, label: str):
+    """Return *pivot_b – pivot_a* with styling highlighting (+/-)."""
+    common_cols = [c for c in pivot_a.columns if c in pivot_b.columns and pivot_a[c].dtype != 'O']
+    diff = pivot_b.copy()
+    diff[common_cols] = pivot_b[common_cols] - pivot_a[common_cols]
+    diff_style = diff.style.applymap(lambda v: "background-color:#daf7a6" if v>0 else ("background-color:#ffb3b3" if v<0 else ""), subset=common_cols)
+    return label, diff_style
 
 
 ###############################################################################
 # 6) MAIN APP
 ###############################################################################
+# --------------------------------------------------------------------------
+#  MAIN APP – Dual Design Version
+# --------------------------------------------------------------------------
+
 def main():
-   
-    title_placeholder = st.empty()
-    title_placeholder.title("Survey Design")
-    st.write("""
-    **Features**:
-    1. Two sheets: 'panel' and 'fresh'.
-    2. Checkbox: if unchecked => Adjusted Universe = max(panel,fresh), if checked => sum(panel+fresh).
-    3. Check single-constraint feasibility. If there's a direct conflict, show the Overall, Cell, and Dimension conflicts as tables.
-    4. If still we fail at the solver => run a slack-based diagnostic to see combined conflict.
-    """)
-
-    all_solvers_list= ["SCIP","ECOS_BB"]
-    st.sidebar.header("Parameters")
-    total_sample= st.sidebar.number_input("Total Sample", value=1000)
-    min_cell_size= st.sidebar.number_input("Min Cell Size", value=4)
-    max_cell_size= st.sidebar.number_input("Max Cell Size", value=40)
-    max_base_weight= st.sidebar.number_input("Max Base Weight", value=600)
-    solver_choice= st.sidebar.selectbox("Solver", all_solvers_list, index=0)
-    conversion_rate= st.sidebar.number_input("Conversion Rate", value=0.3, step=0.01)
-
-    use_sum_universe = st.sidebar.checkbox("Use sum(panel,fresh) instead of max(panel,fresh)", value=False)
-
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("**Sample Size Formula Inputs**")
-    z_score= st.sidebar.number_input("Z-Score", value=1.644853627, format="%.9f")
-    margin_of_error= st.sidebar.number_input("Margin of Error", value=0.075, format="%.3f")
-    p= st.sidebar.number_input("p (Population Proportion)", value=0.5, format="%.2f")
-
-    uploaded_file= st.file_uploader("Upload Excel with 'panel','fresh'", type=["xlsx"])
-    dimension_mins= {"Region":{}, "Size":{}, "Industry":{}}
-
+    st.set_page_config(page_title="Survey Design Optimizer – Compare Designs", layout="wide")
+    st.title("Survey Design Optimizer – Compare Two Designs")
 
     # ------------------------------------------------------------------
-    
-    if uploaded_file is not None:
-        # Update the title based on the file name
-        
-        base_filename = uploaded_file.name.rsplit('.', 1)[0]
-        if "_" in base_filename:
-            parts = base_filename.split("_", 1)
-            display_title = f"{parts[0]} for {parts[1]}"
-        else:
-            display_title = base_filename
-        title_placeholder.title(display_title)
+    #  Upload input file (panel + fresh)
+    # ------------------------------------------------------------------
+    uploaded_file = st.file_uploader("Upload Excel (sheets: 'panel', 'fresh')", type=["xlsx"])
+    if uploaded_file is None:
+        st.info("Please upload the Excel file to proceed.")
+        st.stop()
 
-        try:
-            df_panel_wide= pd.read_excel(uploaded_file, sheet_name="panel")
-            df_fresh_wide= pd.read_excel(uploaded_file, sheet_name="fresh")
-        except Exception as e:
-            st.error(f"Error reading 'panel'/'fresh' => {e}")
-            return
+    df_panel = pd.read_excel(uploaded_file, sheet_name="panel")
+    df_fresh = pd.read_excel(uploaded_file, sheet_name="fresh")
 
-        with st.expander("Original Panel Table"):
-            st.data_editor(df_panel_wide, use_container_width=True, key = "wide_panel")
-        with st.expander("Original Fresh Table"):
-            st.data_editor(df_fresh_wide, use_container_width=True, key = "wide_fresh")
+    # ------------------------------------------------------------------
+    #  Build adjusted universe once (per design we may choose max vs sum)
+    # ------------------------------------------------------------------
+    id_cols = ["Region", "Size"]
+    industry_cols = [c for c in df_panel.columns if c not in id_cols]
 
-    # build Adjusted Universe with same row & column order as panel
-        df_adjusted= df_panel_wide.copy()
-        id_cols= ["Region","Size"]
-        industry_cols= [c for c in df_panel_wide.columns if c not in id_cols]
+    def adjusted_universe(use_sum: bool):
+        df_adj = df_panel.copy()
         for c in industry_cols:
-            if c in df_fresh_wide.columns:
-                if use_sum_universe:
-                    df_adjusted[c] = df_panel_wide[c].fillna(0) + df_fresh_wide[c].fillna(0)
+            if c in df_fresh.columns:
+                if use_sum:
+                    df_adj[c] = df_panel[c].fillna(0) + df_fresh[c].fillna(0)
                 else:
-                    df_adjusted[c] = np.maximum(df_panel_wide[c].fillna(0), df_fresh_wide[c].fillna(0))
+                    df_adj[c] = np.maximum(df_panel[c].fillna(0), df_fresh[c].fillna(0))
+        return df_adj
 
-        st.subheader("Adjusted Universe Table")
-        st.data_editor(df_adjusted, use_container_width=True, key = "adjusted_universe")
+    # ------------------------------------------------------------------
+    #  Sidebar – collect TWO parameter sets
+    # ------------------------------------------------------------------
+    defaults = {"Total Sample":1000, "Min Cell Size":4, "Max Cell Size":40,
+                "Max Base Weight":600, "Conversion Rate":0.3,
+                "Z":1.644853627, "MoE":0.075, "p":0.5}
 
-        # dimension sets from df_adjusted
-        all_regions= df_adjusted["Region"].dropna().unique()
-        all_sizes= df_adjusted["Size"].dropna().unique()
-        all_inds= industry_cols  # in the panel's column order
+    params_A = sidebar_param_block("Design A", defaults, "A")
+    params_B = sidebar_param_block("Design B", defaults, "B")
 
-        # sample size formula
-        n_infinity= compute_n_infinity(z_score, margin_of_error, p)
-        def sum_pop_in_dim(df, dim_type, val):
-            subset= df[df[dim_type]== val]
-            tot= 0
-            for cc in all_inds:
-                tot+= subset[cc].fillna(0).sum()
-            return tot
+    # ------------------------------------------------------------------
+    #  Collect dimension minimums per design
+    # ------------------------------------------------------------------
+    df_univ_A = adjusted_universe(params_A["UseSumUniverse"])
+    df_univ_B = adjusted_universe(params_B["UseSumUniverse"])
 
-        with st.sidebar.expander("Dimension Minimum Overrides", expanded=True):
-            
-            st.write("Defaults from sample-size formula, override if you like.")
-            st.markdown("**By Region**")
-            for r in all_regions:
-                pop_ = sum_pop_in_dim(df_adjusted,"Region", r)
-                defMin= compute_fpc_min(pop_, n_infinity)
-                user_val= st.number_input(f"Min sample for Region={r}", min_value=0, value=int(round(defMin)), step=1)
-                dimension_mins["Region"][r]= user_val
+    dimmins_A = dim_minimums(df_univ_A, industry_cols, params_A, "A")
+    dimmins_B = dim_minimums(df_univ_B, industry_cols, params_B, "B")
 
-            st.markdown("**By Size**")
-            for sz in all_sizes:
-                pop_ = sum_pop_in_dim(df_adjusted,"Size", sz)
-                defMin= compute_fpc_min(pop_, n_infinity)
-                user_val= st.number_input(f"Min sample for Size={sz}", min_value=0, value=int(round(defMin)), step=1)
-                dimension_mins["Size"][sz]= user_val
+    # ------------------------------------------------------------------
+    #  Run button
+    # ------------------------------------------------------------------
+    if not st.button("🚀 Run Optimisation for Both Designs"):
+        st.stop()
 
-            st.markdown("**By Industry**")
-            for ind_ in all_inds:
-                pop_= df_adjusted[ind_].fillna(0).sum()
-                defMin= compute_fpc_min(pop_, n_infinity)
-                user_val= st.number_input(f"Min sample for Industry={ind_}", min_value=0, value=int(round(defMin)), step=1)
-                dimension_mins["Industry"][ind_]= user_val
+    # ------------------------------------------------------------------
+    #  Solve for Design A & Design B
+    # ------------------------------------------------------------------
+    results = {}
+    for label, df_adj, prm, dmins in [("A", df_univ_A, params_A, dimmins_A), ("B", df_univ_B, params_B, dimmins_B)]:
+        try:
+            df_long, _, _, solver_used = run_optimization(df_adj,
+                                                          prm["Total Sample"],
+                                                          prm["Min Cell Size"],
+                                                          prm["Max Cell Size"],
+                                                          prm["Max Base Weight"],
+                                                          prm["Solver"],
+                                                          dmins,
+                                                          prm["Conversion Rate"])
+            if df_long is None:
+                st.error(f"Design {label}: infeasible – see sidebar mins.")
+                st.stop()
+            df_alloc = allocate_panel_fresh(df_long, df_panel, df_fresh)
+            results[label] = {"alloc": df_alloc, "params": prm, "solver": solver_used, "mins": dmins, "adj": df_adj}
+        except Exception as e:
+            st.error(f"Design {label} failed: {e}")
+            st.stop()
 
-            
-            param_dict = {
-                "Total Sample"          : total_sample,
-                "Min Cell Size"         : min_cell_size,
-                "Max Cell Size"         : max_cell_size,
-                "Max Base Weight"       : max_base_weight,
-                "Solver"                : solver_choice,
-                "Conversion Rate"       : conversion_rate,
-                "Use sum(panel,fresh)"  : use_sum_universe,
-                "Z-Score"               : z_score,
-                "Margin of Error"       : margin_of_error,
-                "p (Population Prop.)"  : p,
-            }
-            params_df = pd.DataFrame(list(param_dict.items()),
-                                     columns=["Parameter", "Value"])
-           
-            # NEW  ➜  tidy tables for the minimum overrides
-            region_min_df   = pd.DataFrame(dimension_mins["Region"].items(),
-                                           columns=["Region", "Region_Min"])
-            size_min_df     = pd.DataFrame(dimension_mins["Size"].items(),
-                                           columns=["Size", "Size_Min"])
-            industry_min_df = pd.DataFrame(dimension_mins["Industry"].items(),
-                                           columns=["Industry", "Industry_Min"])
-        
-            st.subheader("Run Parameters")
-            st.data_editor(params_df, use_container_width=True)
-        
-            st.subheader("Region-wise Minimum Sample")
-            st.data_editor(region_min_df, use_container_width=True)
-            
-            st.subheader("Size-wise Minimum Sample")
-            st.data_editor(size_min_df, use_container_width=True)
-            
-            st.subheader("Sector-wise Minimum Sample")
-            st.data_editor(industry_min_df, use_container_width=True)        
+    # ------------------------------------------------------------------
+    #  Build pivot tables & combineds
+    # ------------------------------------------------------------------
+    def pivots(df_alloc):
+        piv_panel = pd.pivot_table(df_alloc, index=["Region","Size"], columns="Industry",
+                                   values="PanelAllocated", aggfunc="sum", fill_value=0, margins=True, margins_name="GrandTotal", sort=False).reset_index()
+        piv_fresh = pd.pivot_table(df_alloc, index=["Region","Size"], columns="Industry",
+                                   values="FreshAllocated", aggfunc="sum", fill_value=0, margins=True, margins_name="GrandTotal", sort=False).reset_index()
+        return piv_panel, piv_fresh
 
-        if st.button("Run Optimization"):
-            try:
-                # run solver
-                df_long_final, df_cell_conf, df_dim_conf, solverinfo= run_optimization(
-                    df_wide= df_adjusted,
-                    total_sample= total_sample,
-                    min_cell_size= min_cell_size,
-                    max_cell_size= max_cell_size,
-                    max_base_weight= max_base_weight,
-                    solver_choice= solver_choice,
-                    dimension_mins= dimension_mins,
-                    conversion_rate= conversion_rate
-                )
-                if df_long_final is None:
-                    st.error("Single-constraint conflict(s).")
-                    df_overall= solverinfo
-                    if not df_overall.empty:
-                        st.subheader("Overall Conflicts")
-                        st.data_editor(df_overall, use_container_width=True)
-                    if not df_dim_conf.empty:
-                        st.subheader("Dimension Conflicts")
-                        st.data_editor(df_dim_conf, use_container_width=True)
-                    if not df_cell_conf.empty:
-                        st.subheader("Cell Conflicts")
-                        st.data_editor(df_cell_conf, use_container_width=True)
-                else:
-                    if isinstance(solverinfo, str):
-                        st.success(f"Solved with {solverinfo}")
-                    else:
-                        st.success("Solver succeeded (unknown solver)")
+    for lbl in ("A","B"):
+        piv_p, piv_f = pivots(results[lbl]["alloc"])
+        results[lbl]["pivot_panel"] = piv_p
+        results[lbl]["pivot_fresh"] = piv_f
+        results[lbl]["combined"] = create_combined_table_with_totals(results[lbl]["alloc"])
 
-                    # allocate panel/fresh
-                    df_alloc= df_long_final.copy()
-                    df_alloc= allocate_panel_fresh(df_alloc, df_panel_wide, df_fresh_wide)
+    # ------------------------------------------------------------------
+    #  UI – Tabs for A, B, Comparison
+    # ------------------------------------------------------------------
+    tab_A, tab_B, tab_cmp = st.tabs(["Design A", "Design B", "Comparison"])
 
-                    # ========== NEW: quick Region- and Size-wise sample totals ==========
-                    region_totals = (
-                        df_alloc
-                          .groupby("Region")[["PanelAllocated", "FreshAllocated"]]
-                          .sum()
-                          .assign(SampleTotal=lambda d: d["PanelAllocated"] + d["FreshAllocated"])
-                          .reset_index()
-                    )
-                    
-                    size_totals = (
-                        df_alloc
-                          .groupby("Size")[["PanelAllocated", "FreshAllocated"]] 
-                          .sum()
-                          .assign(SampleTotal=lambda d: d["PanelAllocated"] + d["FreshAllocated"])
-                          .reset_index()
-                    )
-                    # ------------------------------------------------------------------
-                                        
+    # --- helper to render one design
+    def render_design(tab, lbl):
+        with tab:
+            st.header(f"Design {lbl}  –  Solver: {results[lbl]['solver']}")
+            st.subheader("Panel Allocation")
+            st.dataframe(results[lbl]["pivot_panel"])
+            st.subheader("Fresh Allocation")
+            st.dataframe(results[lbl]["pivot_fresh"])
+            st.subheader("Sample & BaseWeights (combined)")
+            st.dataframe(results[lbl]["combined"])
 
-                    # final panel & fresh pivot with row/col totals
-                    pivot_panel = pd.pivot_table(
-                        df_alloc,
-                        index=["Region","Size"],
-                        columns="Industry",
-                        values="PanelAllocated",
-                        aggfunc='sum',
-                        fill_value=0,
-                        margins=True,
-                        margins_name="GrandTotal",
-                        sort=False
-                    ).reset_index()
-                    pivot_fresh = pd.pivot_table(
-                        df_alloc,
-                        index=["Region","Size"],
-                        columns="Industry",
-                        values="FreshAllocated",
-                        aggfunc='sum',
-                        fill_value=0,
-                        margins=True,
-                        margins_name="GrandTotal",
-                        sort=False
-                    ).reset_index()
-                    
-                    st.header("Optimized Sample Allocation")
-                    st.subheader("Panel")
-                    col_cfg_panel={}
-                    if "Region" in pivot_panel.columns:
-                        col_cfg_panel["Region"] = st.column_config.TextColumn("Region")
-                    if "Size" in pivot_panel.columns:
-                        col_cfg_panel["Size"] = st.column_config.TextColumn("Size")
-                    st.data_editor(pivot_panel, column_config=col_cfg_panel, use_container_width=True)
+    render_design(tab_A, "A")
+    render_design(tab_B, "B")
 
-                    st.subheader("Fresh")
-                    col_cfg_fresh={}
-                    if "Region" in pivot_fresh.columns:
-                        col_cfg_fresh["Region"] = st.column_config.TextColumn("Region")
-                    if "Size" in pivot_fresh.columns:
-                        col_cfg_fresh["Size"] = st.column_config.TextColumn("Size")
-                    st.data_editor(pivot_fresh, column_config=col_cfg_fresh, use_container_width=True)
+    # --- Comparison tab
+    with tab_cmp:
+        st.header("Difference  (Design B minus Design A)")
+        diff_label, diff_style = diff_tables(results["A"]["combined"], results["B"]["combined"], "Sample/BaseWeight Diff")
+        st.dataframe(diff_style)
 
-                    # combined
-                    # ------------------------------------------------------------------
-                    df_combined = create_combined_table_with_totals(df_alloc)
+    # ------------------------------------------------------------------
+    #  Downloads – HTML & Excel
+    # ------------------------------------------------------------------
+    sections = []
+    for lbl in ("A","B"):
+        sections.append((f"Run Parameters ({lbl})", pd.DataFrame(list(results[lbl]["params"].items()), columns=["Parameter","Value"])))
+        sections.append((f"Adjusted Universe ({lbl})", results[lbl]["adj"]))
+        sections.append((f"Allocated Sample & BW ({lbl})", results[lbl]["combined"]))
+    sections.append(diff_label, diff_style)  # comparison at the end
 
-                    id_cols = [c for c in ["Region", "Size"] if c in df_combined.columns]
+    html_bytes = dfs_to_html(sections, page_title="SurveyDesign_Comparison")
+    st.download_button("🌐 Download HTML Snapshot", html_bytes, "survey_design_comparison.html", mime="text/html")
 
-                    # separate grand-total columns first
-                    gt_sample = [c for c in df_combined.columns if c == "GrandTotal_Sample"]
-                    gt_bw     = [c for c in df_combined.columns if c == "GrandTotal_BaseWeight"]
-                    
-                    sample_cols = [c for c in df_combined.columns
-                                   if c.endswith("_Sample") and c not in gt_sample]
-                    bw_cols     = [c for c in df_combined.columns
-                                   if c.endswith("_BaseWeight") and c not in gt_bw]
-                    
-                    # *** NEW order: Region, Size, GrandTotal_Sample, other Samples, all BaseWeights
-                    new_order = id_cols + gt_sample + sample_cols + bw_cols + gt_bw
-                    df_combined = df_combined[new_order]
-                    
-                    
-                    # 1) reorder so samples are contiguous, then base-weights
-              #      id_cols      = [c for c in ["Region", "Size"] if c in df_combined.columns]
-                    
-              #      sample_cols  = [c for c in df_combined.columns if c.endswith("_Sample")]
-              #      bw_cols      = [c for c in df_combined.columns if c.endswith("_BaseWeight")]
-                    
-                    # optional – push the grand-total columns to the very end
-              #      gt_sample = [c for c in sample_cols if c.startswith("GrandTotal")]
-              #      gt_bw     = [c for c in bw_cols     if c.startswith("GrandTotal")]
-                    
-              #      sample_cols  = [c for c in sample_cols if c not in gt_sample]
-              #      bw_cols      = [c for c in bw_cols     if c not in gt_bw]
-                    
-              #      new_order = id_cols + sample_cols + bw_cols + gt_sample + gt_bw
-              #      df_combined = df_combined[new_order]
-                    # ------------------------------------------------------------------
-
-                    
-                    # ⬅️  INSERT THIS LINE
-                    df_combined[[c for c in df_combined.columns if c.endswith("_BaseWeight")]] \
-                        = df_combined[[c for c in df_combined.columns if c.endswith("_BaseWeight")]].round(1)
-                    # ------------------------------------------------------------------
-
-                    df_combined_reset= df_combined.reset_index()
-                    st.subheader("Allocated Sample & Base Weights")
-
-#   Coloring happens here
-                    subset_bw_cols = [c for c in df_combined.columns if c.endswith("_BaseWeight")]
-                    norm_bw_cols = [c for c in subset_bw_cols if c!="GrandTotal_BaseWeight"]
-                    norm_df = df_combined.iloc[:-1]
-                    if not norm_df[norm_bw_cols].empty:
-                        global_min = norm_df[norm_bw_cols].min().min()
-                        global_max = norm_df[norm_bw_cols].max().max()
-                        global_mid = np.percentile(norm_df[norm_bw_cols].stack(),50)
-                    else:
-                        global_min=0
-                        global_mid=0
-                        global_max=0
-                    custom_cmap = LinearSegmentedColormap.from_list("custom", ["#00FF00","#FFFF00","#FF0000"])
-                    norm_obj = TwoSlopeNorm(vmin=global_min,vcenter=global_mid,vmax=global_max)
-                    def baseweight_color(v):
-                        val = norm_obj(v)
-                        color= mcolors.to_hex(custom_cmap(val))
-                        return f'background-color: {color}'
-                    def style_bwcol(series):
-                        n=len(series)
-                        return [baseweight_color(val) if i<n-1 else "" for i,val in enumerate(series)]
-
-                    df_combined[subset_bw_cols] = df_combined[subset_bw_cols].round(1)
-                    stcol= df_combined.style.apply(style_bwcol, subset=norm_bw_cols)
-                    st.dataframe(stcol)
-                    
-
-                    col_cfg_combined={}
-                    if "Region" in df_combined_reset.columns:
-                        col_cfg_combined["Region"] = st.column_config.TextColumn("Region")
-                    if "Size" in df_combined_reset.columns:
-                        col_cfg_combined["Size"] = st.column_config.TextColumn("Size")
-           #         st.data_editor(df_combined_reset, column_config=col_cfg_combined, use_container_width=True)
-
-                      # ---------- Region-wise sample totals -------------
-                    st.subheader("Region-wise Sample Totals")
-                    st.data_editor(region_totals,
-                                   column_config={
-                                       "Region": st.column_config.TextColumn("Region")
-                                   },
-                                   use_container_width=True)
-                    
-                    # ---------- Size-wise sample totals ---------------
-                    st.subheader("Size-wise Sample Totals")
-                    st.data_editor(size_totals,
-                                   column_config={
-                                       "Size": st.column_config.TextColumn("Size")
-                                   },
-                                   use_container_width=True)
-
-                    # population => row/col totals
-                    pivot_pop= pd.pivot_table(
-                        df_alloc,
-                        index=["Region","Size"],
-                        columns="Industry",
-                        values="Population",
-                        aggfunc='sum',
-                        fill_value=0,
-                        margins=True,
-                        margins_name="GrandTotal",
-                        sort=False
-                    ).reset_index()
-
-                    # proportional => no row/col totals
-                    pivot_propsample= pd.pivot_table(
-                        df_alloc,
-                        index=["Region","Size"],
-                        columns="Industry",
-                        values="PropSample",
-                        aggfunc='mean',
-                        fill_value=0,
-                        margins=False,
-                        sort=False
-                    ).reset_index()
-                    
-                    num_cols = pivot_propsample.select_dtypes(include="number").columns
-                    pivot_propsample[num_cols] = (
-                        pivot_propsample[num_cols]
-                          .round(0)           # 0 decimals
-                          .fillna(0)          # if NaNs are possible
-                          .astype(int)        # cast safely
-                    )
-                    # ------------------------------------------------------------------
-                    
-                    st.subheader("Proportional Sample")
-                    col_cfg_prop={}
-                    if "Region" in pivot_propsample.columns:
-                        col_cfg_prop["Region"] = st.column_config.TextColumn("Region")
-                    if "Size" in pivot_propsample.columns:
-                        col_cfg_prop["Size"] = st.column_config.TextColumn("Size")
-                   # st.data_editor(pivot_propsample, column_config=col_cfg_prop, use_container_width=True)
-                    with st.expander("Proportional Sample Table"):
-                        st.dataframe(pivot_propsample)
-
-                    # For the final excel, we rebuild pivot_pop, pivot_propsample in un-reset form
-                    pivot_pop_unreset= pd.pivot_table(
-                        df_alloc,
-                        index=["Region","Size"],
-                        columns="Industry",
-                        values="Population",
-                        aggfunc='sum',
-                        fill_value=0,
-                        margins=True,
-                        margins_name="GrandTotal",
-                        sort=False
-                    )
-                    pivot_propsample_unreset= pd.pivot_table(
-                        df_alloc,
-                        index=["Region","Size"],
-                        columns="Industry",
-                        values="PropSample",
-                        aggfunc='mean',
-                        fill_value=0,
-                        margins=False,
-                        sort=False
-                    )
-
-                    # -----------------------------------------------------------
-                     # ---------- rebuild minimum tables for snapshot ----------
-                    region_min_df   = pd.DataFrame(dimension_mins["Region"].items(),
-                                                   columns=["Region", "Region_Min"])
-                    size_min_df     = pd.DataFrame(dimension_mins["Size"].items(),
-                                                   columns=["Size", "Size_Min"])
-                    industry_min_df = pd.DataFrame(dimension_mins["Industry"].items(),
-                                           columns=["Industry", "Industry_Min"])
-                    #  Build list of tables to go into the HTML snapshot
-                    snapshot_sections = [
-                        ("Run Parameters",               params_df),
-                        ("Region-wise Minimum Sample",     region_min_df),     # ← NEW
-                        ("Size-wise Minimum Sample",       size_min_df),       # ← NEW
-                        ("Sector-wise Minimum Sample",     industry_min_df),   # ← NEW
-                        ("Adjusted Universe",            df_adjusted),        # ← added
-                        ("Panel Sample)",   pivot_panel),
-                        ("Fresh Sample)",   pivot_fresh),
-                        ("Allocated Sample & Base Weights", stcol),        # ← NEW
-                        ("Region-wise Sample Totals",    region_totals),
-                        ("Size-wise Sample Totals",      size_totals),
-                        ("Proportional Sample",          pivot_propsample),
-                    ]
-                    html_bytes = dfs_to_html(snapshot_sections)
-                    snapshot_basename = base_filename       # ← base file name without extension
-                    html_fname        = f"{snapshot_basename}_snapshot.html"
-
-                    html_bytes = dfs_to_html(snapshot_sections, page_title=snapshot_basename)
-                    
-                    st.download_button(
-                        label="🌐 Download full page as HTML",
-                        data=html_bytes,
-                        file_name=html_fname,               # ← use the new name here
-                        mime="text/html"
-                    )
-                    # -----------------------------------------------------------
-                    excel_data= write_excel_combined_table(df_combined, pivot_pop_unreset, pivot_propsample_unreset)
-                    st.download_button(
-                        label="Download Excel",
-                        data=excel_data,
-                        file_name="Optimized_Results.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-
-            except ValueError as e:
-                st.error(str(e))
-                if "No solver found a feasible solution" in str(e):
-                    st.warning("Now running slack-based diagnostic for combined infeasibility...")
-                    try:
-                        id_cols= ["Region","Size"]
-                        dcols= [cc for cc in df_adjusted.columns if cc not in id_cols]
-                        df_long= df_adjusted.melt(
-                            id_vars=id_cols,
-                            value_vars=dcols,
-                            var_name="Industry",
-                            value_name="Population"
-                        ).reset_index(drop=True)
-                        df_long["Population"]= df_long["Population"].fillna(0)
-
-                        diag_sol, diag_usage, diag_status= diagnose_infeasibility_slacks(
-                            df_long,
-                            total_sample,
-                            min_cell_size,
-                            max_cell_size,
-                            max_base_weight,
-                            dimension_mins,
-                            conversion_rate
-                        )
-                        if diag_sol is None:
-                            st.error(f"Slack diag also failed => {diag_status}")
-                        else:
-                            st.subheader("Slack-based partial solution (continuous relaxation)")
-                            st.dataframe(diag_sol)
-                            if diag_usage.empty:
-                                st.info("No slack needed => Possibly integer constraints cause no solution.")
-                            else:
-                                st.warning("Constraints that needed slack:")
-                                st.dataframe(diag_usage)
-                    except Exception as e2:
-                        st.error(f"Slack-based diagnostic error: {e2}")
-            except Exception as e2:
-                st.error(f"Solver Error: {e2}")
-    else:
-        st.warning("Please upload an Excel file first.")
+    # -- Excel workbook
+    #   Each design gets its own combined table sheet; plus a diff sheet
+    wb = io.BytesIO()
+    with pd.ExcelWriter(wb, engine="openpyxl") as xl:
+        for lbl in ("A","B"):
+            results[lbl]["combined"].to_excel(xl, sheet_name=f"Combined_{lbl}")
+            results[lbl]["pivot_panel"].to_excel(xl, sheet_name=f"Panel_{lbl}")
+            results[lbl]["pivot_fresh"].to_excel(xl, sheet_name=f"Fresh_{lbl}")
+        # diff sheet (samples only)
+        diff_df = results["B"]["combined"].copy()
+        num_cols = [c for c in diff_df.columns if diff_df[c].dtype != 'O']
+        diff_df[num_cols] = results["B"]["combined"][num_cols] - results["A"]["combined"][num_cols]
+        diff_df.to_excel(xl, sheet_name="Diff_B_minus_A")
+    wb.seek(0)
+    st.download_button("📊 Download Excel (Both Designs)", wb, "survey_design_comparison.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
-if __name__=="__main__":
+# --------------------------------------------------------------------------
+if __name__ == "__main__":
     main()
