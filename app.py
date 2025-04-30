@@ -80,61 +80,28 @@ def compute_fpc_min(N, n_infinity):
         return n_infinity / (1 + n_infinity / N)
 
 def create_combined_table_with_totals(df_long):
-    """
-    Pivot table for (OptimizedSample, BaseWeight) with row/col totals (margins=True).
-    Honors the categorical ordering in df_long["Region","Size","Industry"] if set.
-    """
     pivot_sample = pd.pivot_table(
-        df_long,
-        index=["Region", "Size"], 
-        columns="Industry",
-        values="OptimizedSample",
-        aggfunc='sum',
-        fill_value=0,
-        margins=True,
-        margins_name="GrandTotal",
-        sort=False  # preserve categorical order
+        df_long, index=["Region","Size"], columns="Industry",
+        values="OptimizedSample", aggfunc="sum", fill_value=0,
+        margins=True, margins_name="GrandTotal", sort=False
     )
-
     pivot_bw = pd.pivot_table(
-        df_long,
-        index=["Region", "Size"],
-        columns="Industry",
-        values="BaseWeight",
-        aggfunc='sum',
-        fill_value=0,
-        margins=True,
-        margins_name="GrandTotal",
-        sort=False
+        df_long, index=["Region","Size"], columns="Industry",
+        values="BaseWeight", aggfunc="sum", fill_value=0,
+        margins=True, margins_name="GrandTotal", sort=False
     )
-
     all_inds = set(pivot_sample.columns).union(pivot_bw.columns)
     combined = pd.DataFrame(index=pivot_sample.index)
     for ind in all_inds:
-        sample_col = f"{ind}_Sample"
-        bw_col = f"{ind}_BaseWeight"
-        if ind in pivot_sample.columns:
-            combined[sample_col] = pivot_sample[ind]
-        else:
-            combined[sample_col] = np.nan
-
-        if ind in pivot_bw.columns:
-            combined[bw_col] = pivot_bw[ind]
-        else:
-            combined[bw_col] = np.nan
-
-    # reorder so that "GrandTotal_Sample" & "GrandTotal_BaseWeight" appear first if they exist
-    col_list = list(combined.columns)
-    if "GrandTotal_Sample" in col_list:
-        col_list.remove("GrandTotal_Sample")
-        col_list.insert(0, "GrandTotal_Sample")
-    if "GrandTotal_BaseWeight" in col_list:
-        col_list.remove("GrandTotal_BaseWeight")
-        col_list.insert(0, "GrandTotal_BaseWeight")
-
-    combined = combined[col_list]
-    return combined
-
+        combined[f"{ind}_Sample"] = pivot_sample[ind] if ind in pivot_sample.columns else np.nan
+        combined[f"{ind}_BaseWeight"] = pivot_bw[ind] if ind in pivot_bw.columns else np.nan
+    # push GrandTotal columns to front
+    cols = combined.columns.tolist()
+    for col in ["GrandTotal_Sample","GrandTotal_BaseWeight"]:
+        if col in cols:
+            cols.insert(0, cols.pop(cols.index(col)))
+    return combined[cols]
+    
 def write_excel_combined_table(df_combined, pivot_population, pivot_propsample):
     """
     Writes:
@@ -728,6 +695,43 @@ def dim_minimums(df_adjusted: pd.DataFrame, inds: list, params: dict, key_sfx: s
             dmins["Industry"][ind] = st.number_input(f"Min sample – Industry {ind}", 0, value=int(round(compute_fpc_min(pop_i, n_inf))), step=1, key=f"imin_{ind}_{key_sfx}")
     return dmins
 
+###############################################################################
+# 2) NEW HELPERS FOR COMPARISON
+###############################################################################
+def build_adjusted(df_panel_wide, df_fresh_wide, use_sum_universe):
+    df_adj = df_panel_wide.copy()
+    id_cols = ["Region","Size"]
+    inds = [c for c in df_panel_wide.columns if c not in id_cols]
+    for c in inds:
+        a = df_panel_wide[c].fillna(0)
+        b = df_fresh_wide[c].fillna(0)
+        df_adj[c] = a + b if use_sum_universe else np.maximum(a, b)
+    return df_adj
+
+def make_pivots(df_alloc):
+    pivot_panel = pd.pivot_table(
+        df_alloc, index=["Region","Size"], columns="Industry",
+        values="PanelAllocated", aggfunc="sum", fill_value=0,
+        margins=True, margins_name="GrandTotal", sort=False
+    ).reset_index()
+    pivot_fresh = pd.pivot_table(
+        df_alloc, index=["Region","Size"], columns="Industry",
+        values="FreshAllocated", aggfunc="sum", fill_value=0,
+        margins=True, margins_name="GrandTotal", sort=False
+    ).reset_index()
+    df_combined = create_combined_table_with_totals(df_alloc)
+    return pivot_panel, pivot_fresh, df_combined
+
+def style_bwcol(series):
+    # identical to your original styling logic
+    vals = series.values
+    mid = np.percentile(vals[:-1], 50) if len(vals)>1 else 0
+    vmin, vmax = vals[:-1].min(), vals[:-1].max() if len(vals)>1 else (0,0)
+    cmap = LinearSegmentedColormap.from_list("cus", ["#00FF00","#FFFF00","#FF0000"])
+    norm = TwoSlopeNorm(vmin=vmin, vcenter=mid, vmax=vmax)
+    def color_val(v):
+        return f'background-color: {mcolors.to_hex(cmap(norm(v)))}'
+    return [color_val(v) for v in vals[:-1]] + [""]
 
 # --------------------------------------------------------------------------
 #  NEW  ➜  Comparison helpers
@@ -745,86 +749,175 @@ def diff_tables(pivot_a: pd.DataFrame, pivot_b: pd.DataFrame, label: str):
 ###############################################################################
 # 6) MAIN APP
 ###############################################################################
-# --------------------------------------------------------------------------
-#  MAIN APP – Dual Design Version (UI tweak)
-# --------------------------------------------------------------------------
-# ------------------------------- MAIN APP ---------------------------------
-
+###############################################################################
+# 3) MAIN APP
+###############################################################################
 def main():
-    st.set_page_config(page_title="Survey Design Optimizer – Compare Designs", layout="wide")
-    st.title("Survey Design Optimizer – Compare Two Designs")
+    st.set_page_config(layout="wide")
+    st.title("Survey Design ● Compare Two Designs")
 
-    uploaded = st.file_uploader("Upload Excel (sheets: 'panel', 'fresh')", type=["xlsx"])
-    if not uploaded:
-        st.info("Please upload the Excel file to proceed.")
-        return
+    # ─── Parameter set A ──────────────────────────────────────────────────────
+    with st.sidebar.expander("Parameters: Set A", expanded=True):
+        A_total_sample    = st.number_input("Total Sample (A)",       value=1000, key="A_tsA")
+        A_min_cell_size   = st.number_input("Min Cell Size (A)",      value=4,    key="A_mcsA")
+        A_max_cell_size   = st.number_input("Max Cell Size (A)",      value=40,   key="A_MxcsA")
+        A_max_base_weight = st.number_input("Max Base Weight (A)",    value=600,  key="A_mbwA")
+        A_solver_choice   = st.selectbox( "Solver (A)", ["SCIP","ECOS_BB"], index=0, key="A_slvA")
+        A_conversion_rate = st.number_input("Conversion Rate (A)",    value=0.3,  step=0.01, key="A_crA")
+        A_use_sum         = st.checkbox("Use sum(panel,fresh) (A)", value=False, key="A_usA")
+        # sample size formula inputs
+        A_z_score         = st.number_input("Z-Score (A)",           value=1.644853627, key="A_zA", format="%.9f")
+        A_margin_of_error = st.number_input("Margin of Error (A)",   value=0.075,       key="A_meA", format="%.3f")
+        A_p               = st.number_input("p (A)",                 value=0.5,         key="A_pA",  format="%.2f")
+        # dimension minima dictionary
+        A_dims = {"Region":{}, "Size":{}, "Industry":{}}
 
-    df_panel = pd.read_excel(uploaded, sheet_name="panel")
-    df_fresh = pd.read_excel(uploaded, sheet_name="fresh")
+    # ─── Parameter set B ──────────────────────────────────────────────────────
+    with st.sidebar.expander("Parameters: Set B", expanded=True):
+        B_total_sample    = st.number_input("Total Sample (B)",       value=1000, key="B_tsB")
+        B_min_cell_size   = st.number_input("Min Cell Size (B)",      value=4,    key="B_mcsB")
+        B_max_cell_size   = st.number_input("Max Cell Size (B)",      value=40,   key="B_MxcsB")
+        B_max_base_weight = st.number_input("Max Base Weight (B)",    value=600,  key="B_mbwB")
+        B_solver_choice   = st.selectbox( "Solver (B)", ["SCIP","ECOS_BB"], index=0, key="B_slvB")
+        B_conversion_rate = st.number_input("Conversion Rate (B)",    value=0.3,  step=0.01, key="B_crB")
+        B_use_sum         = st.checkbox("Use sum(panel,fresh) (B)", value=False, key="B_usB")
+        # sample size formula inputs
+        B_z_score         = st.number_input("Z-Score (B)",           value=1.644853627, key="B_zB", format="%.9f")
+        B_margin_of_error = st.number_input("Margin of Error (B)",   value=0.075,       key="B_meB", format="%.3f")
+        B_p               = st.number_input("p (B)",                 value=0.5,         key="B_pB",  format="%.2f")
+        # dimension minima dictionary
+        B_dims = {"Region":{}, "Size":{}, "Industry":{}}
 
-    id_cols = ["Region", "Size"]
-    ind_cols = [c for c in df_panel.columns if c not in id_cols]
+    # ─── File upload & adjusted universe ──────────────────────────────────────
+    uploaded_file = st.file_uploader("Upload Excel with 'panel' & 'fresh'", type=["xlsx"])
+    if not uploaded_file:
+        return st.warning("Please upload an Excel file first.")
 
-    def make_univ(use_sum):
-        df_u = df_panel.copy()
-        for c in ind_cols:
-            if c in df_fresh.columns:
-                df_u[c] = df_panel[c].fillna(0) + df_fresh[c].fillna(0) if use_sum else np.maximum(df_panel[c].fillna(0), df_fresh[c].fillna(0))
-        return df_u
+    df_panel = pd.read_excel(uploaded_file, sheet_name="panel")
+    df_fresh = pd.read_excel(uploaded_file, sheet_name="fresh")
 
-    defaults = {"Total Sample":1000, "Min Cell Size":4, "Max Cell Size":40, "Max Base Weight":600, "Conversion Rate":0.3, "Z":1.644853627, "MoE":0.075, "p":0.5}
-    pA = sidebar_param_block("Design A", defaults, "A")
-    pB = sidebar_param_block("Design B", defaults, "B")
+    df_adjusted = build_adjusted(df_panel, df_fresh, A_use_sum)  # same data for both
+    st.subheader("Adjusted Universe Table")
+    st.data_editor(df_adjusted, use_container_width=True)
 
-    univA, univB = make_univ(pA["UseSumUniverse"]), make_univ(pB["UseSumUniverse"])
-    minsA, minsB = dim_minimums(univA, ind_cols, pA, "A"), dim_minimums(univB, ind_cols, pB, "B")
+    # ─── Collect dimension minima defaults for both runs ──────────────────────
+    all_inds = [c for c in df_adjusted.columns if c not in ["Region","Size"]]
+    regions = df_adjusted["Region"].dropna().unique()
+    sizes   = df_adjusted["Size"].dropna().unique()
+    n_inf_A = compute_n_infinity(A_z_score, A_margin_of_error, A_p)
+    n_inf_B = compute_n_infinity(B_z_score, B_margin_of_error, B_p)
 
-    if not st.button("🚀 Run optimisation for both designs"):
-        return
+    with st.sidebar.expander("Dimension Minima Overrides A", expanded=False):
+        for r in regions:
+            pop = df_adjusted[df_adjusted["Region"]==r][all_inds].sum().sum()
+            default = int(round(compute_fpc_min(pop, n_inf_A)))
+            A_dims["Region"][r] = st.number_input(f"A min for Region={r}", min_value=0, value=default, key=f"A_dimReg_{r}")
+        for s in sizes:
+            pop = df_adjusted[df_adjusted["Size"]==s][all_inds].sum().sum()
+            default = int(round(compute_fpc_min(pop, n_inf_A)))
+            A_dims["Size"][s] = st.number_input(f"A min for Size={s}", min_value=0, value=default, key=f"A_dimSz_{s}")
+        for ind in all_inds:
+            pop = df_adjusted[ind].sum()
+            default = int(round(compute_fpc_min(pop, n_inf_A)))
+            A_dims["Industry"][ind] = st.number_input(f"A min for Industry={ind}", min_value=0, value=default, key=f"A_dimInd_{ind}")
 
-    results = {}
-    for lbl, df_adj, prm, dmn in [("A", univA, pA, minsA), ("B", univB, pB, minsB)]:
-        df_long, *_ = run_optimization(df_adj, prm["Total Sample"], prm["Min Cell Size"], prm["Max Cell Size"], prm["Max Base Weight"], prm["Solver"], dmn, prm["Conversion Rate"])
-        if df_long is None:
-            st.error(f"Design {lbl} infeasible – adjust parameters or minimums.")
-            return
-        df_alloc = allocate_panel_fresh(df_long, df_panel, df_fresh)
-        combined = create_combined_table_with_totals(df_alloc)
-        num_cols = combined.select_dtypes(include="number").columns
-        combined[num_cols] = combined[num_cols].round(0).astype("Int64")
-        results[lbl] = combined
+    with st.sidebar.expander("Dimension Minima Overrides B", expanded=False):
+        for r in regions:
+            pop = df_adjusted[df_adjusted["Region"]==r][all_inds].sum().sum()
+            default = int(round(compute_fpc_min(pop, n_inf_B)))
+            B_dims["Region"][r] = st.number_input(f"B min for Region={r}", min_value=0, value=default, key=f"B_dimReg_{r}")
+        for s in sizes:
+            pop = df_adjusted[df_adjusted["Size"]==s][all_inds].sum().sum()
+            default = int(round(compute_fpc_min(pop, n_inf_B)))
+            B_dims["Size"][s] = st.number_input(f"B min for Size={s}", min_value=0, value=default, key=f"B_dimSz_{s}")
+        for ind in all_inds:
+            pop = df_adjusted[ind].sum()
+            default = int(round(compute_fpc_min(pop, n_inf_B)))
+            B_dims["Industry"][ind] = st.number_input(f"B min for Industry={ind}", min_value=0, value=default, key=f"B_dimInd_{ind}")
 
-    # -------------------- DISPLAY --------------------
-    tabA, tabB, tabC = st.tabs(["Design A", "Design B", "Comparison"])
-    with tabA:
-        st.dataframe(results["A"])
-    with tabB:
-        st.dataframe(results["B"])
-    with tabC:
-        col1, col2 = st.columns(2)
-        with col1:
-            st.subheader("Design A")
-            st.dataframe(results["A"])
-        with col2:
-            st.subheader("Design B")
-            st.dataframe(results["B"])
+    # ─── Run comparison ────────────────────────────────────────────────────────
+    if st.button("Run comparison"):
+        # Run A
+        dfA_long, dfA_cells, dfA_dims, solA = run_optimization(
+            df_adjusted, A_total_sample, A_min_cell_size, A_max_cell_size,
+            A_max_base_weight, A_solver_choice, A_dims, A_conversion_rate
+        )
+        dfA_alloc = allocate_panel_fresh(dfA_long, df_panel, df_fresh)
+        panelA, freshA, combA = make_pivots(dfA_alloc)
 
-    # -------------------- DOWNLOADS ------------------
-    sections = [("Allocated Sample & BaseWeights (A)", results["A"]), ("Allocated Sample & BaseWeights (B)", results["B"])]
-    html_bytes = dfs_to_html(sections, page_title="SurveyDesign_Comparison")
-    st.download_button("🌐 Download HTML Snapshot", html_bytes, "survey_design_comparison.html", mime="text/html")
+        # Run B
+        dfB_long, dfB_cells, dfB_dims, solB = run_optimization(
+            df_adjusted, B_total_sample, B_min_cell_size, B_max_cell_size,
+            B_max_base_weight, B_solver_choice, B_dims, B_conversion_rate
+        )
+        dfB_alloc = allocate_panel_fresh(dfB_long, df_panel, df_fresh)
+        panelB, freshB, combB = make_pivots(dfB_alloc)
 
-    out = io.BytesIO()
-    with pd.ExcelWriter(out, engine="openpyxl") as xl:
-        results["A"].to_excel(xl, sheet_name="Combined_A", index=False)
-        results["B"].to_excel(xl, sheet_name="Combined_B", index=False)
-        diff = results["B"].copy()
-        num = diff.select_dtypes(include="number").columns
-        diff[num] = results["B"][num].fillna(0) - results["A"][num].fillna(0)
-        diff.to_excel(xl, sheet_name="Diff_B_minus_A", index=False)
-    out.seek(0)
-    st.download_button("📊 Download Excel (Both Designs)", out, "survey_design_comparison.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        # Display side by side
+        colA, colB = st.columns(2)
+        with colA:
+            st.subheader("Set A Results")
+            st.markdown(f"**Solver:** {solA}")
+            st.data_editor(panelA, use_container_width=True)
+            st.dataframe(combA.style.apply(style_bwcol, axis=1))
+        with colB:
+            st.subheader("Set B Results")
+            st.markdown(f"**Solver:** {solB}")
+            st.data_editor(panelB, use_container_width=True)
+            st.dataframe(combB.style.apply(style_bwcol, axis=1))
 
+        # Δ comparison
+        df_diff = (
+            combA.reset_index()[["Region","Size","GrandTotal_Sample"]]
+            .merge(
+                combB.reset_index()[["Region","Size","GrandTotal_Sample"]],
+                on=["Region","Size"], suffixes=("_A","_B")
+            )
+        )
+        df_diff["Δ Sample"] = df_diff["GrandTotal_Sample_A"] - df_diff["GrandTotal_Sample_B"]
+        st.subheader("Difference in Total Sample (A − B)")
+        st.dataframe(df_diff)
 
-if __name__ == "__main__":
+        # Download snapshot HTML
+        paramsA = pd.DataFrame({
+            "Parameter":["Total Sample","Min Cell","Max Cell","Max BW","Conversion","Z","MOE","p"],
+            "Value":[A_total_sample,A_min_cell_size,A_max_cell_size,A_max_base_weight,A_conversion_rate,A_z_score,A_margin_of_error,A_p]
+        })
+        paramsB = pd.DataFrame({
+            "Parameter":["Total Sample","Min Cell","Max Cell","Max BW","Conversion","Z","MOE","p"],
+            "Value":[B_total_sample,B_min_cell_size,B_max_cell_size,B_max_base_weight,B_conversion_rate,B_z_score,B_margin_of_error,B_p]
+        })
+        snapshot = [
+            ("Parameters A", paramsA),
+            ("Parameters B", paramsB),
+            ("Adjusted Universe", df_adjusted),
+            ("Panel A", panelA),
+            ("Panel B", panelB),
+            ("Combined A", combA.style.apply(style_bwcol, axis=1)),
+            ("Combined B", combB.style.apply(style_bwcol, axis=1)),
+            ("Δ Sample", df_diff)
+        ]
+        html_bytes = dfs_to_html(snapshot, page_title="Design Comparison")
+        st.download_button(
+            label="Download comparison HTML",
+            data=html_bytes,
+            file_name="comparison.html",
+            mime="text/html"
+        )
+
+        # Download multi-sheet Excel
+        out = io.BytesIO()
+        with pd.ExcelWriter(out, engine="openpyxl") as writer:
+            combA.reset_index().to_excel(writer, sheet_name="A_Combined", index=False)
+            combB.reset_index().to_excel(writer, sheet_name="B_Combined", index=False)
+            df_diff.to_excel(writer, sheet_name="Delta_Sample", index=False)
+        out.seek(0)
+        st.download_button(
+            label="Download comparison Excel",
+            data=out,
+            file_name="comparison.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+if __name__=="__main__":
     main()
