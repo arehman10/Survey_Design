@@ -112,7 +112,7 @@ def create_combined_table_with_totals(df_long):
         combined[sample_col] = pivot_sample[ind] if ind in pivot_sample.columns else np.nan
         combined[bw_col]     = pivot_bw[ind]     if ind in pivot_bw.columns else np.nan
 
-    # reorder so that "GrandTotal_Sample" & "GrandTotal_BaseWeight" appear first if they exist
+    # reorder so that "GrandTotal_Sample" & "GrandTotal_BaseWeight" appear first
     col_list = list(combined.columns)
     if "GrandTotal_Sample" in col_list:
         col_list.remove("GrandTotal_Sample")
@@ -124,32 +124,38 @@ def create_combined_table_with_totals(df_long):
     combined = combined[col_list]
     return combined
 
-def write_excel_combined_table(df_combined, pivot_population, pivot_propsample, scenario_label=""):
+def write_scenario_sheets_to_writer(
+    writer,
+    df_combined,
+    pivot_population,
+    pivot_propsample,
+    scenario_label=""
+):
     """
-    Writes 4 sheets:
-    1) Allocated Sample
-    2) Proportional Sample
-    3) Sample_with_baseweight (with color scale)
-    4) Population
-    Each sheet is prefixed with scenario_label if provided.
+    Write scenario's 4 sheets directly to the *same* Excel writer workbook:
+      1) <scenario_label>Allocated Sample
+      2) <scenario_label>Proportional Sample
+      3) <scenario_label>Sample_with_baseweight (with color scale)
+      4) <scenario_label>Population
+
+    This avoids the error "Cannot copy between worksheets from different workbooks."
     """
     from openpyxl.utils import get_column_letter
     from openpyxl.formatting.rule import ColorScaleRule
-    import openpyxl
 
-    df_out = df_combined.reset_index()
+    df_out = df_combined.reset_index(drop=False)
     n_rows = df_out.shape[0]
 
+    # We separate columns
+    id_cols     = [c for c in ["Region","Size"] if c in df_out.columns]
     sample_cols = [c for c in df_out.columns if c.endswith("_Sample")]
     bw_cols     = [c for c in df_out.columns if c.endswith("_BaseWeight")]
-    id_cols     = [c for c in ["Region", "Size"] if c in df_out.columns]
-
     df_out = df_out[id_cols + sample_cols + bw_cols]
 
-    # Evaluate base-weight color-scale
+    # For color scaling
     norm_bw_cols = [c for c in bw_cols if c!="GrandTotal_BaseWeight"]
     if len(df_out) > 1 and norm_bw_cols:
-        norm_df    = df_out.iloc[:-1]
+        norm_df = df_out.iloc[:-1]
         global_min = norm_df[norm_bw_cols].min().min()
         global_max = norm_df[norm_bw_cols].max().max()
         global_mid = np.percentile(norm_df[norm_bw_cols].stack(), 50)
@@ -158,55 +164,51 @@ def write_excel_combined_table(df_combined, pivot_population, pivot_propsample, 
         global_mid=0
         global_max=0
 
-    output = io.BytesIO()
+    # 1) Allocated Sample
+    sheet_samples = f"{scenario_label}Allocated Sample" if scenario_label else "Allocated Sample"
+    df_samples_only = df_out[id_cols + sample_cols].copy()
+    df_samples_only.to_excel(writer, sheet_name=sheet_samples, index=False)
+    
+    # 2) Proportional Sample
+    sheet_prop = f"{scenario_label}Proportional Sample" if scenario_label else "Proportional Sample"
     pivot_propsample_rounded = pivot_propsample.round(0).astype(int)
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        # 1) Allocated Sample
-        sheet_samples = f"{scenario_label}Allocated Sample" if scenario_label else "Allocated Sample"
-        df_samples_only = df_out[id_cols + sample_cols]
-        df_samples_only.to_excel(writer, sheet_name=sheet_samples, index=False)
+    pivot_propsample_rounded.reset_index().to_excel(
+        writer, sheet_name=sheet_prop, index=False
+    )
+    ws_prop = writer.sheets[sheet_prop]
+    first_row = 2
+    last_row  = ws_prop.max_row
+    first_col = 3
+    last_col  = ws_prop.max_column
+    for row in ws_prop.iter_rows(min_row=first_row, max_row=last_row,
+                                 min_col=first_col, max_col=last_col):
+        for cell in row:
+            cell.number_format = "0"
 
-        # 2) Proportional Sample
-        sheet_prop = f"{scenario_label}Proportional Sample" if scenario_label else "Proportional Sample"
-        pivot_propsample_rounded.reset_index().to_excel(
-            writer, sheet_name=sheet_prop, index=False
+    # 3) Sample_with_baseweight
+    sheet_sw = f"{scenario_label}Sample_with_baseweight" if scenario_label else "Sample_with_baseweight"
+    df_out.to_excel(writer, sheet_name=sheet_sw, index=False)
+    ws_sw = writer.sheets[sheet_sw]
+
+    def make_rule():
+        return ColorScaleRule(
+            start_type="num", start_value=global_min, start_color="00FF00",
+            mid_type="num",   mid_value=global_mid,  mid_color="FFFF00",
+            end_type="num",   end_value=global_max,  end_color="FF0000",
         )
-        ws_prop = writer.sheets[sheet_prop]
-        first_row = 2
-        last_row  = ws_prop.max_row
-        first_col = 3
-        last_col  = ws_prop.max_column
-        for row in ws_prop.iter_rows(min_row=first_row, max_row=last_row,
-                                     min_col=first_col, max_col=last_col):
-            for cell in row:
-                cell.number_format = "0"
 
-        # 3) Sample_with_baseweight
-        sheet_sw = f"{scenario_label}Sample_with_baseweight" if scenario_label else "Sample_with_baseweight"
-        df_out.to_excel(writer, sheet_name=sheet_sw, index=False)
-        ws = writer.sheets[sheet_sw]
+    for col_name in norm_bw_cols:
+        col_idx = df_out.columns.get_loc(col_name)+1  # +1 for 1-based
+        excel_col = get_column_letter(col_idx)
+        rng       = f"{excel_col}2:{excel_col}{n_rows}"
+        ws_sw.conditional_formatting.add(rng, make_rule())
+        # format to 0.0
+        for cell in ws_sw[f"{excel_col}2":f"{excel_col}{n_rows}"]:
+            cell[0].number_format = "0.0"
 
-        def make_rule():
-            return ColorScaleRule(
-                start_type="num", start_value=global_min, start_color="00FF00",
-                mid_type="num",   mid_value=global_mid,  mid_color="FFFF00",
-                end_type="num",   end_value=global_max,  end_color="FF0000",
-            )
-
-        for col_name in norm_bw_cols:
-            col_idx   = df_out.columns.get_loc(col_name)+1  # +1 for 1-based indexing in Excel
-            excel_col = get_column_letter(col_idx)
-            rng       = f"{excel_col}2:{excel_col}{n_rows}"
-            ws.conditional_formatting.add(rng, make_rule())
-            for cell in ws[f"{excel_col}2":f"{excel_col}{n_rows}"]:
-                cell[0].number_format = "0.0"
-
-        # 4) Population
-        sheet_pop = f"{scenario_label}Population" if scenario_label else "Population"
-        pivot_population.to_excel(writer, sheet_name=sheet_pop)
-
-    output.seek(0)
-    return output.getvalue()
+    # 4) Population
+    sheet_pop = f"{scenario_label}Population" if scenario_label else "Population"
+    pivot_population.to_excel(writer, sheet_name=sheet_pop, index=True)
 
 ###############################################################################
 # 2) FEASIBILITY & SLACK DIAGNOSTICS
@@ -302,6 +304,7 @@ def diagnose_infeasibility_slacks(df_long,
     If run_optimization fails, we do a slack-based approach 
     to see how far we are from feasibility.
     """
+    import cvxpy as cp
     x= cp.Variable(len(df_long), nonneg=True)
     s_tot= cp.Variable(nonneg=True)
     constraints= [cp.sum(x)+ s_tot== total_sample]
@@ -395,6 +398,8 @@ def run_optimization(df_wide,
     """
     Convert wide->long, do feasibility check, solve MIP, return solution or None if direct conflict.
     """
+    import cvxpy as cp
+
     id_cols= ["Region","Size"]
     data_cols= [c for c in df_wide.columns if c not in id_cols]
     df_long= df_wide.melt(
@@ -705,8 +710,7 @@ def main():
             # define a quick function to run scenario
             def run_scenario(label, 
                              total_sample, min_cell, max_cell, max_bw, solver, conv_rate,
-                             dimension_mins,
-                             zscore, moe, pval):
+                             dimension_mins):
                 """
                 1) run_optimization
                 2) if success => allocate_panel_fresh => produce pivot tables
@@ -868,7 +872,7 @@ def main():
                             total_sample,
                             min_cell,
                             max_cell,
-                            max_base_weight,
+                            max_bw,
                             dimension_mins,
                             conv_rate
                         )
@@ -886,18 +890,28 @@ def main():
                 return scenario_result
 
             # run scenario 1
-            scenario1_result = run_scenario("Scenario1_",
-                            total_sample_1, min_cell_size_1, max_cell_size_1, max_base_weight_1,
-                            solver_choice_1, conversion_rate_1,
-                            dimension_mins_1,
-                            z_score_1, margin_of_error_1, p_1)
+            scenario1_result = run_scenario(
+                label="Scenario1_",
+                total_sample=total_sample_1,
+                min_cell=min_cell_size_1,
+                max_cell=max_cell_size_1,
+                max_bw=max_base_weight_1,
+                solver=solver_choice_1,
+                conv_rate=conversion_rate_1,
+                dimension_mins=dimension_mins_1
+            )
 
             # run scenario 2
-            scenario2_result = run_scenario("Scenario2_",
-                            total_sample_2, min_cell_size_2, max_cell_size_2, max_base_weight_2,
-                            solver_choice_2, conversion_rate_2,
-                            dimension_mins_2,
-                            z_score_2, margin_of_error_2, p_2)
+            scenario2_result = run_scenario(
+                label="Scenario2_",
+                total_sample=total_sample_2,
+                min_cell=min_cell_size_2,
+                max_cell=max_cell_size_2,
+                max_bw=max_base_weight_2,
+                solver=solver_choice_2,
+                conv_rate=conversion_rate_2,
+                dimension_mins=dimension_mins_2
+            )
 
             # show scenario 1
             st.header("Scenario 1 Results")
@@ -926,7 +940,7 @@ def main():
                         diag_status1= scenario1_result.get("diag_status", "")
                         if diag_sol1 is not None:
                             st.dataframe(diag_sol1, key="s1_diag_sol")
-                        if not diag_usage1.empty:
+                        if diag_usage1 is not None and not diag_usage1.empty:
                             st.dataframe(diag_usage1, key="s1_diag_usage")
                         if diag_status1:
                             st.write(f"Diagnostic solver status: {diag_status1}")
@@ -1053,45 +1067,38 @@ def main():
                     mime="text/html"
                 )
 
-            # For Excel, we combine scenario1 & scenario2
+            # For Excel, we combine scenario1 & scenario2 sheets in *one* workbook
             excel_out = io.BytesIO()
-            # We'll create a single workbook manually:
             with pd.ExcelWriter(excel_out, engine="openpyxl") as writer:
                 # scenario1
                 if scenario1_result.get("success"):
-                    # create scenario1 sub sheets
-                    bytes1 = write_excel_combined_table(
-                        scenario1_result["df_combined"],
-                        scenario1_result["pivot_pop"].set_index(["Region","Size"]).drop(columns="GrandTotal", errors="ignore"),
-                        scenario1_result["pivot_propsample"].set_index(["Region","Size"]),
+                    write_scenario_sheets_to_writer(
+                        writer=writer,
+                        df_combined=scenario1_result["df_combined"],
+                        pivot_population=scenario1_result["pivot_pop"].set_index(["Region","Size"]).drop(columns="GrandTotal", errors="ignore"),
+                        pivot_propsample=scenario1_result["pivot_propsample"].set_index(["Region","Size"]),
                         scenario_label="S1_"
                     )
-                    wb1 = openpyxl.load_workbook(io.BytesIO(bytes1))
-                    for sheetname in wb1.sheetnames:
-                        ws_copy = wb1[sheetname]
-                        new_sheet = writer.book.copy_worksheet(ws_copy)
-                        new_sheet.title = sheetname
 
                 # scenario2
                 if scenario2_result.get("success"):
-                    bytes2 = write_excel_combined_table(
-                        scenario2_result["df_combined"],
-                        scenario2_result["pivot_pop"].set_index(["Region","Size"]).drop(columns="GrandTotal", errors="ignore"),
-                        scenario2_result["pivot_propsample"].set_index(["Region","Size"]),
+                    write_scenario_sheets_to_writer(
+                        writer=writer,
+                        df_combined=scenario2_result["df_combined"],
+                        pivot_population=scenario2_result["pivot_pop"].set_index(["Region","Size"]).drop(columns="GrandTotal", errors="ignore"),
+                        pivot_propsample=scenario2_result["pivot_propsample"].set_index(["Region","Size"]),
                         scenario_label="S2_"
                     )
-                    wb2 = openpyxl.load_workbook(io.BytesIO(bytes2))
-                    for sheetname in wb2.sheetnames:
-                        ws_copy = wb2[sheetname]
-                        new_sheet = writer.book.copy_worksheet(ws_copy)
-                        new_sheet.title = sheetname
 
                 # difference sheet if both success
                 if scenario1_result.get("success") and scenario2_result.get("success"):
                     diff_sheet = writer.book.create_sheet("ScenarioDiff")
-                    for r_idx, rowvals in enumerate([df_diff.columns.tolist()]+ df_diff.values.tolist(), start=1):
-                        for c_idx, val in enumerate(rowvals, start=1):
-                            diff_sheet.cell(row=r_idx, column=c_idx, value=val)
+                    # We'll store df_diff as is
+                    df_diff = df_diff.reset_index(drop=True)
+                    col_headers = list(df_diff.columns)
+                    diff_sheet.append(col_headers)
+                    for rowvals in df_diff.values:
+                        diff_sheet.append(list(rowvals))
 
             excel_out.seek(0)
             st.download_button(
