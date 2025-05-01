@@ -1155,10 +1155,6 @@ def main():
                 file_name=f"{base_filename}_comparison.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-        st.write("Below, your app continues as normal with the solver logic... (shortened for example)")
-    
-        st.write("**Try saving your session** from the sidebar, then copy/paste the link. Or store the ID and load it again later.")
-
 
     else:
         st.warning("Please upload an Excel file first.")
