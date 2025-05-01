@@ -15,43 +15,50 @@ import swiglpk as glpk  # If needed for GLPK
 from pandas.io.formats.style import Styler
 
 ###############################################################################
-# HELPER FUNCTIONS
+# 1) HELPER FUNCTIONS
 ###############################################################################
+def add_grand_total_row(df, key_col_name):
+    """Return df with an extra row that holds the column totals."""
+    grand = df[["PanelSample", "FreshSample", "SampleTotal"]].sum().to_frame().T
+    grand[key_col_name] = "Grand Total"
+    return pd.concat([df, grand], ignore_index=True)[df.columns]
+
+HTML_TEMPLATE = textwrap.dedent("""\
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="utf-8">
+      <title>{page_title}</title>
+      <style>
+        body      {{ font-family: Arial, sans-serif; margin: 2rem; }}
+        h2        {{ color:#154360; }}
+        table     {{ border-collapse: collapse; margin-bottom: 1.5rem; width:100%; }}
+        th, td    {{ border: 1px solid #bbb; padding: 4px 6px; font-size: 14px; }}
+        th        {{ background:#eef; }}
+        tr:nth-child(even) td {{ background:#f9f9f9; }}
+        .scrollbox {{ max-height:400px; overflow:auto; border:1px solid #ccc; padding:4px; }}
+      </style>
+    </head>
+    <body>
+      <h1>{page_title}</h1>
+      {body_html}
+    </body>
+    </html>
+""")
+
 def dfs_to_html(sections, page_title="Snapshot"):
     """
     sections = [(title, dataframe_or_styler), ...]
-    Returns bytes of a single HTML file, each table in a scrollable <div>.
+    Returns bytes of a single HTML file with scrollable <div> around each table.
     """
-    HTML_TEMPLATE = textwrap.dedent("""\
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-          <meta charset="utf-8">
-          <title>{page_title}</title>
-          <style>
-            body      {{ font-family: Arial, sans-serif; margin: 2rem; }}
-            h2        {{ color:#154360; }}
-            table     {{ border-collapse: collapse; margin-bottom: 1.5rem; width:100%; }}
-            th, td    {{ border: 1px solid #bbb; padding: 4px 6px; font-size: 14px; }}
-            th        {{ background:#eef; }}
-            tr:nth-child(even) td {{ background:#f9f9f9; }}
-            .scrollbox {{ max-height:400px; overflow:auto; border:1px solid #ccc; padding:4px; }}
-          </style>
-        </head>
-        <body>
-          <h1>{page_title}</h1>
-          {body_html}
-        </body>
-        </html>
-    """)
     parts = []
     for title, obj in sections:
         parts.append(f"<h2>{html.escape(title)}</h2>")
         parts.append('<div class="scrollbox">')
         if isinstance(obj, Styler):
+            # Keep styling if it's a Styler object
             parts.append(obj.to_html())
         else:
-            # Non-Styler DataFrame
             parts.append(obj.to_html(index=False, border=0, justify="center"))
         parts.append("</div>")
     full = HTML_TEMPLATE.format(body_html="\n".join(parts), page_title=html.escape(page_title))
@@ -67,7 +74,7 @@ def compute_fpc_min(N, n_infinity):
     if N <= 0:
         return 0
     else:
-        return int(round(n_infinity / (1 + n_infinity / N)))  # round to int here
+        return n_infinity / (1 + n_infinity / N)
 
 def create_combined_table_with_totals(df_long):
     """
@@ -75,7 +82,7 @@ def create_combined_table_with_totals(df_long):
     """
     pivot_sample = pd.pivot_table(
         df_long,
-        index=["Region","Size"],
+        index=["Region", "Size"],
         columns="Industry",
         values="OptimizedSample",
         aggfunc='sum',
@@ -87,7 +94,7 @@ def create_combined_table_with_totals(df_long):
 
     pivot_bw = pd.pivot_table(
         df_long,
-        index=["Region","Size"],
+        index=["Region", "Size"],
         columns="Industry",
         values="BaseWeight",
         aggfunc='sum',
@@ -117,6 +124,95 @@ def create_combined_table_with_totals(df_long):
     combined = combined[col_list]
     return combined
 
+def write_scenario_sheets_to_writer(
+    writer,
+    df_combined,
+    pivot_population,
+    pivot_propsample,
+    scenario_label=""
+):
+    """
+    Write scenario's 4 sheets directly to the *same* Excel writer workbook:
+      1) <scenario_label>Allocated Sample
+      2) <scenario_label>Proportional Sample
+      3) <scenario_label>Sample_with_baseweight (with color scale)
+      4) <scenario_label>Population
+
+    This avoids the error "Cannot copy between worksheets from different workbooks."
+    """
+    from openpyxl.utils import get_column_letter
+    from openpyxl.formatting.rule import ColorScaleRule
+
+    df_out = df_combined.reset_index(drop=False)
+    n_rows = df_out.shape[0]
+
+    # We separate columns
+    id_cols     = [c for c in ["Region","Size"] if c in df_out.columns]
+    sample_cols = [c for c in df_out.columns if c.endswith("_Sample")]
+    bw_cols     = [c for c in df_out.columns if c.endswith("_BaseWeight")]
+    df_out = df_out[id_cols + sample_cols + bw_cols]
+
+    # For color scaling
+    norm_bw_cols = [c for c in bw_cols if c!="GrandTotal_BaseWeight"]
+    if len(df_out) > 1 and norm_bw_cols:
+        norm_df = df_out.iloc[:-1]
+        global_min = norm_df[norm_bw_cols].min().min()
+        global_max = norm_df[norm_bw_cols].max().max()
+        global_mid = np.percentile(norm_df[norm_bw_cols].stack(), 50)
+    else:
+        global_min=0
+        global_mid=0
+        global_max=0
+
+    # 1) Allocated Sample
+    sheet_samples = f"{scenario_label}Allocated Sample" if scenario_label else "Allocated Sample"
+    df_samples_only = df_out[id_cols + sample_cols].copy()
+    df_samples_only.to_excel(writer, sheet_name=sheet_samples, index=False)
+    
+    # 2) Proportional Sample
+    sheet_prop = f"{scenario_label}Proportional Sample" if scenario_label else "Proportional Sample"
+    pivot_propsample_rounded = pivot_propsample.round(0).astype(int)
+    pivot_propsample_rounded.reset_index().to_excel(
+        writer, sheet_name=sheet_prop, index=False
+    )
+    ws_prop = writer.sheets[sheet_prop]
+    first_row = 2
+    last_row  = ws_prop.max_row
+    first_col = 3
+    last_col  = ws_prop.max_column
+    for row in ws_prop.iter_rows(min_row=first_row, max_row=last_row,
+                                 min_col=first_col, max_col=last_col):
+        for cell in row:
+            cell.number_format = "0"
+
+    # 3) Sample_with_baseweight
+    sheet_sw = f"{scenario_label}Sample_with_baseweight" if scenario_label else "Sample_with_baseweight"
+    df_out.to_excel(writer, sheet_name=sheet_sw, index=False)
+    ws_sw = writer.sheets[sheet_sw]
+
+    def make_rule():
+        return ColorScaleRule(
+            start_type="num", start_value=global_min, start_color="00FF00",
+            mid_type="num",   mid_value=global_mid,  mid_color="FFFF00",
+            end_type="num",   end_value=global_max,  end_color="FF0000",
+        )
+
+    for col_name in norm_bw_cols:
+        col_idx = df_out.columns.get_loc(col_name)+1  # +1 for 1-based
+        excel_col = get_column_letter(col_idx)
+        rng       = f"{excel_col}2:{excel_col}{n_rows}"
+        ws_sw.conditional_formatting.add(rng, make_rule())
+        # format to 0.0
+        for cell in ws_sw[f"{excel_col}2":f"{excel_col}{n_rows}"]:
+            cell[0].number_format = "0.0"
+
+    # 4) Population
+    sheet_pop = f"{scenario_label}Population" if scenario_label else "Population"
+    pivot_population.to_excel(writer, sheet_name=sheet_pop, index=True)
+
+###############################################################################
+# 2) FEASIBILITY & SLACK DIAGNOSTICS
+###############################################################################
 def detailed_feasibility_check(df_long,
                                total_sample,
                                min_cell_size,
@@ -124,9 +220,7 @@ def detailed_feasibility_check(df_long,
                                max_base_weight,
                                conversion_rate,
                                dimension_mins):
-    """
-    Simple check if a scenario has direct conflicts, e.g. cell min > feasible max.
-    """
+
     n_cells = len(df_long)
     feasible_max_by_i = []
     cell_conflicts = []
@@ -142,7 +236,6 @@ def detailed_feasibility_check(df_long,
             fmax= min(pop_i, max_cell_size, conv_ub)
 
         lb_bw= pop_i/max_base_weight
-        # apply min_cell_size if feasible
         if fmax>= min_cell_size and pop_i>0:
             lb= max(lb_bw, min_cell_size, 0)
         else:
@@ -154,10 +247,10 @@ def detailed_feasibility_check(df_long,
                 "Region": df_long.loc[i,"Region"],
                 "Size": df_long.loc[i,"Size"],
                 "Industry": df_long.loc[i,"Industry"],
-                "Population": int(pop_i),
-                "LowerBound": round(lb),
-                "FeasibleMax": round(fmax),
-                "ShortBy": round(lb - fmax),
+                "Population": pop_i,
+                "LowerBound": lb,
+                "FeasibleMax": fmax,
+                "ShortBy": lb - fmax,
                 "Reason":"Cell min > feasible max"
             })
 
@@ -167,8 +260,8 @@ def detailed_feasibility_check(df_long,
     if sum_feas< total_sample:
         overall_conflicts.append({
             "TotalSample": total_sample,
-            "SumFeasibleMax": int(round(sum_feas)),
-            "ShortBy": int(round(total_sample - sum_feas)),
+            "SumFeasibleMax": sum_feas,
+            "ShortBy": total_sample - sum_feas,
             "Reason":"Overall sum(feasible max) < total_sample"
         })
 
@@ -189,8 +282,8 @@ def detailed_feasibility_check(df_long,
                         "DimType": dt,
                         "DimName": val,
                         "RequiredMin": req_min,
-                        "SumFeasibleMax": int(round(sum_fmax_dim)),
-                        "ShortBy": int(round(req_min- sum_fmax_dim)),
+                        "SumFeasibleMax": sum_fmax_dim,
+                        "ShortBy": req_min- sum_fmax_dim,
                         "Reason":"Dimension min> sum feasible"
                     })
 
@@ -211,6 +304,7 @@ def diagnose_infeasibility_slacks(df_long,
     If run_optimization fails, we do a slack-based approach 
     to see how far we are from feasibility.
     """
+    import cvxpy as cp
     x= cp.Variable(len(df_long), nonneg=True)
     s_tot= cp.Variable(nonneg=True)
     constraints= [cp.sum(x)+ s_tot== total_sample]
@@ -266,14 +360,14 @@ def diagnose_infeasibility_slacks(df_long,
     if s_tot.value>1e-8:
         slack_usage.append({
             "Constraint":"TotalSample",
-            "SlackUsed": round(s_tot.value,0),
-            "Comment":f"Sum(x) ended up {int(total_sample- s_tot.value)}, short by {round(s_tot.value,0)}"
+            "SlackUsed": s_tot.value,
+            "Comment":f"Sum(x) ended up {total_sample- s_tot.value}, short by {s_tot.value}"
         })
     for (dt,val), var in dim_slacks.items():
         if var.value>1e-8:
             slack_usage.append({
                 "Constraint":f"DimensionMin {dt}={val}",
-                "SlackUsed": round(var.value,0),
+                "SlackUsed": var.value,
                 "Comment":"We missed that dimension min by this amount"
             })
     for i,var in enumerate(cell_slacks):
@@ -283,13 +377,16 @@ def diagnose_infeasibility_slacks(df_long,
             ind= df_long.loc[i,"Industry"]
             slack_usage.append({
                 "Constraint":f"CellMin i={i} (R={r}, Sz={s}, Ind={ind})",
-                "SlackUsed": round(var.value,0),
+                "SlackUsed": var.value,
                 "Comment":"We missed the cell-level LB by this amount"
             })
 
     df_slack_usage= pd.DataFrame(slack_usage).sort_values("SlackUsed", ascending=False)
     return df_slack_sol, df_slack_usage, prob.status
 
+###############################################################################
+# 3) MAIN SOLVER
+###############################################################################
 def run_optimization(df_wide,
                      total_sample,
                      min_cell_size,
@@ -301,6 +398,8 @@ def run_optimization(df_wide,
     """
     Convert wide->long, do feasibility check, solve MIP, return solution or None if direct conflict.
     """
+    import cvxpy as cp
+
     id_cols= ["Region","Size"]
     data_cols= [c for c in df_wide.columns if c not in id_cols]
     df_long= df_wide.melt(
@@ -323,6 +422,7 @@ def run_optimization(df_wide,
         conversion_rate, dimension_mins
     )
     if (not df_overall.empty) or (not df_cells.empty) or (not df_dims.empty):
+        # Return None to show conflict
         return None, df_cells, df_dims, df_overall
 
     n_cells= len(df_long)
@@ -347,7 +447,6 @@ def run_optimization(df_wide,
         constraints.append(x[i]<= fmax)
         constraints.append(x[i]<= pop_i)
 
-    # dimension constraints
     dim_idx= {"Region":{}, "Size":{}, "Industry":{}}
     for dt in dim_idx:
         for val in df_long[dt].unique():
@@ -395,9 +494,12 @@ def run_optimization(df_wide,
 
     return df_long, None, None, solver_that_succeeded
 
+###############################################################################
+# 4) ALLOCATE BETWEEN PANEL & FRESH
+###############################################################################
 def allocate_panel_fresh(df_long_sol, df_panel_wide, df_fresh_wide):
     """
-    Splits final sample into PanelAllocated & FreshAllocated, no decimals.
+    Splits final sample into PanelAllocated & FreshAllocated.
     """
     identifier_cols= ["Region","Size"]
     panel_inds= [c for c in df_panel_wide.columns if c not in identifier_cols]
@@ -445,7 +547,7 @@ def allocate_panel_fresh(df_long_sol, df_panel_wide, df_fresh_wide):
     return df_long_sol
 
 ###############################################################################
-# 6) MAIN APP
+# 5) MAIN APP
 ###############################################################################
 def main():
     st.title("Survey Design")
@@ -455,499 +557,552 @@ def main():
     2. Checkbox: if unchecked => Adjusted Universe = max(panel,fresh), if checked => sum(panel+fresh).
     3. Check single-constraint feasibility. If there's a direct conflict, show the Overall, Cell, and Dimension conflicts as tables.
     4. If still we fail at the solver => run a slack-based diagnostic to see combined conflict.
-    5. Two scenarios with separate parameters, plus side-by-side comparison.
+    5. Two scenarios with separate parameters, plus difference.
     6. Dimension minimums auto-calculated from sample-size formula (override in sidebar).
-    7. HTML & Excel downloads, with no decimal places anywhere.
+    7. HTML & Excel downloads with color-scale in base-weight columns.
     """)
 
-    # Scenario 1 params
+    all_solvers_list= ["SCIP","ECOS_BB"]
+
+    # --- SCENARIO 1 parameters ---
     st.sidebar.header("Parameters for Scenario 1")
     total_sample_1= st.sidebar.number_input("Total Sample", value=1000, key="total_sample_1")
     min_cell_size_1= st.sidebar.number_input("Min Cell Size", value=4, key="min_cell_size_1")
     max_cell_size_1= st.sidebar.number_input("Max Cell Size", value=40, key="max_cell_size_1")
     max_base_weight_1= st.sidebar.number_input("Max Base Weight", value=600, key="max_base_weight_1")
-    solver_choice_1= st.sidebar.selectbox("Solver (S1)", ["SCIP","ECOS_BB"], index=0, key="solver_choice_1")
-    conversion_rate_1= st.sidebar.number_input("Conversion Rate (S1)", value=0.3, step=0.01, key="conv_rate_1")
+    solver_choice_1= st.sidebar.selectbox("Solver", all_solvers_list, index=0, key="solver_choice_1")
+    conversion_rate_1= st.sidebar.number_input("Conversion Rate", value=0.3, step=0.01, key="conversion_rate_1")
 
     use_sum_universe = st.sidebar.checkbox("Use sum(panel,fresh) instead of max(panel,fresh)", value=False)
 
     st.sidebar.markdown("---")
     st.sidebar.markdown("**Sample Size Formula Inputs (Scenario 1)**")
-    z_score_1= st.sidebar.number_input("Z-Score (S1)", value=1.644853627, format="%.9f", key="z_score_1")
-    margin_of_error_1= st.sidebar.number_input("Margin of Error (S1)", value=0.075, format="%.3f", key="moe_1")
-    p_1= st.sidebar.number_input("p (Prop) (S1)", value=0.5, format="%.2f", key="p_1")
+    z_score_1= st.sidebar.number_input("Z-Score", value=1.644853627, format="%.9f", key="z_score_1")
+    margin_of_error_1= st.sidebar.number_input("Margin of Error", value=0.075, format="%.3f", key="margin_of_error_1")
+    p_1= st.sidebar.number_input("p (Population Proportion)", value=0.5, format="%.2f", key="p_1")
 
     st.sidebar.markdown("---")
 
-    # Scenario 2 params
+    # --- SCENARIO 2 parameters ---
     st.sidebar.header("Parameters for Scenario 2")
-    total_sample_2= st.sidebar.number_input("Total Sample (S2)", value=800, key="total_sample_2")
-    min_cell_size_2= st.sidebar.number_input("Min Cell Size (S2)", value=4, key="min_cell_size_2")
-    max_cell_size_2= st.sidebar.number_input("Max Cell Size (S2)", value=40, key="max_cell_size_2")
-    max_base_weight_2= st.sidebar.number_input("Max Base Weight (S2)", value=600, key="max_base_weight_2")
-    solver_choice_2= st.sidebar.selectbox("Solver (S2)", ["SCIP","ECOS_BB"], index=1, key="solver_choice_2")
-    conversion_rate_2= st.sidebar.number_input("Conversion Rate (S2)", value=0.3, step=0.01, key="conv_rate_2")
+    total_sample_2= st.sidebar.number_input("Total Sample", value=800, key="total_sample_2")
+    min_cell_size_2= st.sidebar.number_input("Min Cell Size", value=4, key="min_cell_size_2")
+    max_cell_size_2= st.sidebar.number_input("Max Cell Size", value=40, key="max_cell_size_2")
+    max_base_weight_2= st.sidebar.number_input("Max Base Weight", value=600, key="max_base_weight_2")
+    solver_choice_2= st.sidebar.selectbox("Solver ", all_solvers_list, index=1, key="solver_choice_2")
+    conversion_rate_2= st.sidebar.number_input("Conversion Rate ", value=0.3, step=0.01, key="conversion_rate_2")
 
     st.sidebar.markdown("**Sample Size Formula Inputs (Scenario 2)**")
-    z_score_2= st.sidebar.number_input("Z-Score (S2)", value=1.644853627, format="%.9f", key="z_score_2")
-    margin_of_error_2= st.sidebar.number_input("Margin of Error (S2)", value=0.075, format="%.3f", key="moe_2")
-    p_2= st.sidebar.number_input("p (Prop) (S2)", value=0.5, format="%.2f", key="p_2")
+    z_score_2= st.sidebar.number_input("Z-Score ", value=1.644853627, format="%.9f", key="z_score_2")
+    margin_of_error_2= st.sidebar.number_input("Margin of Error ", value=0.075, format="%.3f", key="margin_of_error_2")
+    p_2= st.sidebar.number_input("p (Population Proportion) ", value=0.5, format="%.2f", key="p_2")
 
     st.sidebar.markdown("---")
 
     uploaded_file= st.file_uploader("Upload Excel with 'panel','fresh'", type=["xlsx"])
 
+    # We'll store dimension_mins for scenario1 and scenario2:
+    dimension_mins_1= {"Region":{}, "Size":{}, "Industry":{}}
+    dimension_mins_2= {"Region":{}, "Size":{}, "Industry":{}}
+
     if uploaded_file is not None:
+        # Derive base_filename for display
         base_filename = uploaded_file.name.rsplit('.', 1)[0]
+        if "_" in base_filename:
+            parts = base_filename.split("_", 1)
+            display_title = f"{parts[0]} for {parts[1]}"
+        else:
+            display_title = base_filename
+        st.title(display_title)
 
         try:
-            df_panel= pd.read_excel(uploaded_file, sheet_name="panel")
-            df_fresh= pd.read_excel(uploaded_file, sheet_name="fresh")
+            df_panel_wide= pd.read_excel(uploaded_file, sheet_name="panel")
+            df_fresh_wide= pd.read_excel(uploaded_file, sheet_name="fresh")
         except Exception as e:
             st.error(f"Error reading 'panel'/'fresh' => {e}")
             return
 
-        st.subheader("Original Panel Table")
-        st.data_editor(df_panel, key="orig_panel", use_container_width=True)
-        st.subheader("Original Fresh Table")
-        st.data_editor(df_fresh, key="orig_fresh", use_container_width=True)
+        with st.expander("Original Panel Table"):
+            st.data_editor(df_panel_wide, use_container_width=True, key="wide_panel_scenario")
+        with st.expander("Original Fresh Table"):
+            st.data_editor(df_fresh_wide, use_container_width=True, key="wide_fresh_scenario")
 
-        # Build Adjusted Universe
-        df_adjusted = df_panel.copy()
+        # build Adjusted Universe
+        df_adjusted= df_panel_wide.copy()
         id_cols= ["Region","Size"]
-        industry_cols= [c for c in df_panel.columns if c not in id_cols]
+        industry_cols= [c for c in df_panel_wide.columns if c not in id_cols]
         for c in industry_cols:
-            if c in df_fresh.columns:
+            if c in df_fresh_wide.columns:
                 if use_sum_universe:
-                    df_adjusted[c] = df_panel[c].fillna(0) + df_fresh[c].fillna(0)
+                    df_adjusted[c] = df_panel_wide[c].fillna(0) + df_fresh_wide[c].fillna(0)
                 else:
-                    df_adjusted[c] = np.maximum(df_panel[c].fillna(0), df_fresh[c].fillna(0))
+                    df_adjusted[c] = np.maximum(df_panel_wide[c].fillna(0), df_fresh_wide[c].fillna(0))
 
         st.subheader("Adjusted Universe Table")
-        st.data_editor(df_adjusted, key="adj_universe", use_container_width=True)
+        st.data_editor(df_adjusted, use_container_width=True, key="adjusted_universe_scenario")
 
-        # Gather dimension sets
-        all_regions = df_adjusted["Region"].dropna().unique()
-        all_sizes   = df_adjusted["Size"].dropna().unique()
-        all_inds    = industry_cols
+        # dimension sets from df_adjusted
+        all_regions= df_adjusted["Region"].dropna().unique()
+        all_sizes= df_adjusted["Size"].dropna().unique()
+        all_inds= industry_cols
 
-        # dimension min dicts
-        dimension_mins_1= {"Region":{}, "Size":{}, "Industry":{}}
-        dimension_mins_2= {"Region":{}, "Size":{}, "Industry":{}}
-
-        # Precompute scenario 1 n_infinity
+        # sample-size formulas for scenario 1
         n_infinity_1 = compute_n_infinity(z_score_1, margin_of_error_1, p_1)
-        def sum_pop_in_dim_s1(dim_type, val):
-            subset= df_adjusted[df_adjusted[dim_type]== val]
-            return subset[industry_cols].fillna(0).sum().sum()
+        def sum_pop_in_dim_1(df, dim_type, val):
+            subset= df[df[dim_type]== val]
+            tot=0
+            for cc in all_inds:
+                tot+= subset[cc].fillna(0).sum()
+            return tot
 
-        # Precompute scenario 2 n_infinity
+        # sample-size formulas for scenario 2
         n_infinity_2 = compute_n_infinity(z_score_2, margin_of_error_2, p_2)
-        def sum_pop_in_dim_s2(dim_type, val):
-            subset= df_adjusted[df_adjusted[dim_type]== val]
-            return subset[industry_cols].fillna(0).sum().sum()
+        def sum_pop_in_dim_2(df, dim_type, val):
+            subset= df[df[dim_type]== val]
+            tot=0
+            for cc in all_inds:
+                tot+= subset[cc].fillna(0).sum()
+            return tot
 
-        # Fill dimension minimums from formula
-        for r in all_regions:
-            pop_1= sum_pop_in_dim_s1("Region", r)
-            dimension_mins_1["Region"][r] = compute_fpc_min(pop_1, n_infinity_1)
-            pop_2= sum_pop_in_dim_s2("Region", r)
-            dimension_mins_2["Region"][r] = compute_fpc_min(pop_2, n_infinity_2)
-        for s in all_sizes:
-            pop_1= sum_pop_in_dim_s1("Size", s)
-            dimension_mins_1["Size"][s] = compute_fpc_min(pop_1, n_infinity_1)
-            pop_2= sum_pop_in_dim_s2("Size", s)
-            dimension_mins_2["Size"][s] = compute_fpc_min(pop_2, n_infinity_2)
-        for i in all_inds:
-            pop_1= df_adjusted[i].fillna(0).sum()
-            dimension_mins_1["Industry"][i] = compute_fpc_min(pop_1, n_infinity_1)
-            pop_2= df_adjusted[i].fillna(0).sum()
-            dimension_mins_2["Industry"][i] = compute_fpc_min(pop_2, n_infinity_2)
+        with st.sidebar.expander("Dimension Minimum Overrides (Auto-Calculated, Then Overridable)", expanded=True):
+            st.write("### Scenario 1")
+            for r in all_regions:
+                pop_ = sum_pop_in_dim_1(df_adjusted,"Region", r)
+                defMin= compute_fpc_min(pop_, n_infinity_1)
+                user_val= st.number_input(f"Min sample for Region={r} (S1)", 
+                                          min_value=0, value=int(round(defMin)), step=1, key=f"S1_reg_{r}")
+                dimension_mins_1["Region"][r]= user_val
+            for sz in all_sizes:
+                pop_ = sum_pop_in_dim_1(df_adjusted,"Size", sz)
+                defMin= compute_fpc_min(pop_, n_infinity_1)
+                user_val= st.number_input(f"Min sample for Size={sz} (S1)",
+                                          min_value=0, value=int(round(defMin)), step=1, key=f"S1_size_{sz}")
+                dimension_mins_1["Size"][sz]= user_val
+            for ind_ in all_inds:
+                pop_= df_adjusted[ind_].fillna(0).sum()
+                defMin= compute_fpc_min(pop_, n_infinity_1)
+                user_val= st.number_input(f"Min sample for Industry={ind_} (S1)",
+                                          min_value=0, value=int(round(defMin)), step=1, key=f"S1_ind_{ind_}")
+                dimension_mins_1["Industry"][ind_]= user_val
 
-        # We'll show these in the final output, so no separate sidebar override in this example.
-        # (If you want to override them, simply add number_input loops.)
+            st.write("### Scenario 2")
+            for r in all_regions:
+                pop_ = sum_pop_in_dim_2(df_adjusted,"Region", r)
+                defMin= compute_fpc_min(pop_, n_infinity_2)
+                user_val= st.number_input(f"Min sample for Region={r} (S2)", 
+                                          min_value=0, value=int(round(defMin)), step=1, key=f"S2_reg_{r}")
+                dimension_mins_2["Region"][r]= user_val
+            for sz in all_sizes:
+                pop_ = sum_pop_in_dim_2(df_adjusted,"Size", sz)
+                defMin= compute_fpc_min(pop_, n_infinity_2)
+                user_val= st.number_input(f"Min sample for Size={sz} (S2)",
+                                          min_value=0, value=int(round(defMin)), step=1, key=f"S2_size_{sz}")
+                dimension_mins_2["Size"][sz]= user_val
+            for ind_ in all_inds:
+                pop_= df_adjusted[ind_].fillna(0).sum()
+                defMin= compute_fpc_min(pop_, n_infinity_2)
+                user_val= st.number_input(f"Min sample for Industry={ind_} (S2)",
+                                          min_value=0, value=int(round(defMin)), step=1, key=f"S2_ind_{ind_}")
+                dimension_mins_2["Industry"][ind_]= user_val
 
-        # Helper for scenario run
-        def run_scenario(total_sample, min_c, max_c, max_bw, solver_choice, conv_rate, dimension_mins):
-            scenario_result= {}
-            try:
-                df_long_final, df_cell_conf, df_dim_conf, solverinfo = run_optimization(
-                    df_wide=df_adjusted,
-                    total_sample=total_sample,
-                    min_cell_size=min_c,
-                    max_cell_size=max_c,
-                    max_base_weight=max_bw,
-                    solver_choice=solver_choice,
-                    dimension_mins=dimension_mins,
-                    conversion_rate=conv_rate
-                )
-                if df_long_final is None:
-                    # single-constraint conflict
-                    scenario_result["success"]=False
-                    scenario_result["cell_conflicts"]= df_cell_conf
-                    scenario_result["dim_conflicts"] = df_dim_conf
-                    scenario_result["overall_conflicts"]= solverinfo
-                else:
-                    # success
-                    scenario_result["success"]=True
-                    scenario_result["solverinfo"]= solverinfo
-                    # allocate
-                    df_alloc= allocate_panel_fresh(df_long_final, df_panel, df_fresh)
-                    scenario_result["df_alloc"] = df_alloc
-                    # Build pivot etc.
-                    region_totals = (
-                        df_alloc
-                        .groupby("Region")[["PanelAllocated","FreshAllocated"]]
-                        .sum()
-                        .assign(SampleTotal=lambda d: d["PanelAllocated"]+ d["FreshAllocated"])
-                        .reset_index()
-                    )
-
-                    size_totals = (
-                        df_alloc
-                        .groupby("Size")[["PanelAllocated","FreshAllocated"]]
-                        .sum()
-                        .assign(SampleTotal=lambda d: d["PanelAllocated"]+ d["FreshAllocated"])
-                        .reset_index()
-                    )
-                    pivot_panel = pd.pivot_table(
-                        df_alloc,
-                        index=["Region","Size"],
-                        columns="Industry",
-                        values="PanelAllocated",
-                        aggfunc='sum',
-                        fill_value=0,
-                        margins=True,
-                        margins_name="GrandTotal"
-                    ).reset_index()
-
-                    pivot_fresh = pd.pivot_table(
-                        df_alloc,
-                        index=["Region","Size"],
-                        columns="Industry",
-                        values="FreshAllocated",
-                        aggfunc='sum',
-                        fill_value=0,
-                        margins=True,
-                        margins_name="GrandTotal"
-                    ).reset_index()
-
-                    df_combined = create_combined_table_with_totals(df_alloc)
-                    # reorder
-                    id_cols= [c for c in ["Region","Size"] if c in df_combined.columns]
-                    gt_samp= [c for c in df_combined.columns if c=="GrandTotal_Sample"]
-                    gt_bw  = [c for c in df_combined.columns if c=="GrandTotal_BaseWeight"]
-                    s_cols = [c for c in df_combined.columns if c.endswith("_Sample") and c not in gt_samp]
-                    bw_cols= [c for c in df_combined.columns if c.endswith("_BaseWeight") and c not in gt_bw]
-                    df_combined= df_combined[id_cols + gt_samp + s_cols + bw_cols + gt_bw]
-
-                    # Round everything to 0 decimals, cast to int, even base weights
-                    numeric_only= df_combined.select_dtypes(include=[np.number]).columns
-                    df_combined[numeric_only]= df_combined[numeric_only].round(0).astype(int, errors="ignore")
-
-                    # color scale
-                    norm_bw_cols= [c for c in bw_cols if c!="GrandTotal_BaseWeight"]
-                    if len(df_combined)>1 and norm_bw_cols:
-                        norm_df = df_combined.iloc[:-1]  # exclude total row
-                        global_min= norm_df[norm_bw_cols].min().min()
-                        global_max= norm_df[norm_bw_cols].max().max()
-                        global_mid= np.percentile(norm_df[norm_bw_cols].stack(), 50)
-                    else:
-                        global_min= 0
-                        global_mid= 0
-                        global_max= 0
-                    custom_cmap= LinearSegmentedColormap.from_list("custom", ["#00FF00","#FFFF00","#FF0000"])
-                    norm_obj= TwoSlopeNorm(vmin=global_min, vcenter=global_mid, vmax=global_max)
-                    def baseweight_color(v):
-                        val= norm_obj(v)
-                        return f"background-color: {mcolors.to_hex(custom_cmap(val))}"
-                    def style_bwcol(series):
-                        n= len(series)
-                        return [baseweight_color(x) if i<n-1 else "" for i,x in enumerate(series)]
-                    stcol= df_combined.style.apply(style_bwcol, subset=norm_bw_cols)
-
-                    # population pivot
-                    pivot_pop= pd.pivot_table(
-                        df_alloc,
-                        index=["Region","Size"],
-                        columns="Industry",
-                        values="Population",
-                        aggfunc='sum',
-                        fill_value=0,
-                        margins=True,
-                        margins_name="GrandTotal"
-                    ).reset_index()
-
-                    # prop pivot
-                    pivot_propsample= pd.pivot_table(
-                        df_alloc,
-                        index=["Region","Size"],
-                        columns="Industry",
-                        values="PropSample",
-                        aggfunc='mean',
-                        fill_value=0
-                    ).reset_index()
-                    numeric_cols= pivot_propsample.select_dtypes(include="number").columns
-                    pivot_propsample[numeric_cols]= pivot_propsample[numeric_cols].round(0).astype(int)
-
-                    # store
-                    scenario_result["region_totals"]= region_totals
-                    scenario_result["size_totals"]= size_totals
-                    scenario_result["pivot_panel"]= pivot_panel.round(0).astype(int, errors="ignore")
-                    scenario_result["pivot_fresh"]= pivot_fresh.round(0).astype(int, errors="ignore")
-                    scenario_result["df_combined"]= df_combined
-                    scenario_result["df_combined_style"]= stcol
-                    scenario_result["pivot_pop"]= pivot_pop
-                    scenario_result["pivot_propsample"]= pivot_propsample.round(0).astype(int, errors="ignore")
-
-            except ValueError as e:
-                if "No solver found a feasible solution" in str(e):
-                    # slack diag
-                    df_longX= df_adjusted.melt(
-                        id_vars=["Region","Size"],
-                        var_name="Industry",
-                        value_name="Population"
-                    ).fillna(0)
-                    diag_sol, diag_usage, diag_status= diagnose_infeasibility_slacks(
-                        df_longX,
-                        total_sample,
-                        min_c,
-                        max_c,
-                        max_bw,
-                        dimension_mins,
-                        conv_rate
-                    )
-                    scenario_result["success"]=False
-                    scenario_result["error_msg"]= str(e)
-                    scenario_result["diag_sol"]= diag_sol
-                    scenario_result["diag_usage"]= diag_usage
-                    scenario_result["diag_status"]= diag_status
-                else:
-                    scenario_result["success"]=False
-                    scenario_result["error_msg"]= str(e)
-            except Exception as e2:
-                scenario_result["success"]=False
-                scenario_result["error_msg"]= f"Solver Error: {e2}"
-
-            return scenario_result
-
+        # ---------- RUN BOTH SCENARIOS -----------
         if st.button("Run Optimization for Both Scenarios"):
-            # Create param data frames
-            params_1 = pd.DataFrame([
-                ("Total Sample", total_sample_1),
-                ("Min Cell Size", min_cell_size_1),
-                ("Max Cell Size", max_cell_size_1),
-                ("Max Base Weight", max_base_weight_1),
-                ("Solver", solver_choice_1),
-                ("Conversion Rate", conversion_rate_1),
-                ("Z-Score", z_score_1),
-                ("Margin of Error", margin_of_error_1),
-                ("p (Proportion)", p_1),
-                ("Use sum(panel,fresh)?", use_sum_universe)
-            ], columns=["Parameter","Value"])
+            # define a quick function to run scenario
+            def run_scenario(label, 
+                             total_sample, min_cell, max_cell, max_bw, solver, conv_rate,
+                             dimension_mins):
+                """
+                1) run_optimization
+                2) if success => allocate_panel_fresh => produce pivot tables
+                else => handle conflicts or do slack diag
+                """
+                scenario_result = {}
+                try:
+                    df_long_final, df_cell_conf, df_dim_conf, solver_info = run_optimization(
+                        df_wide=df_adjusted,
+                        total_sample=total_sample,
+                        min_cell_size=min_cell,
+                        max_cell_size=max_cell,
+                        max_base_weight=max_bw,
+                        solver_choice=solver,
+                        dimension_mins=dimension_mins,
+                        conversion_rate=conv_rate
+                    )
+                    if df_long_final is None:
+                        # single-constraint conflict
+                        scenario_result["success"] = False
+                        scenario_result["cell_conflicts"] = df_cell_conf
+                        scenario_result["dim_conflicts"]  = df_dim_conf
+                        scenario_result["overall_conflicts"] = solver_info
+                        scenario_result["solver_info"] = None
+                    else:
+                        scenario_result["success"] = True
+                        scenario_result["solver_info"] = solver_info
+                        # allocate
+                        df_alloc = allocate_panel_fresh(df_long_final, df_panel_wide, df_fresh_wide)
+                        scenario_result["df_alloc"] = df_alloc
 
-            params_2 = pd.DataFrame([
-                ("Total Sample", total_sample_2),
-                ("Min Cell Size", min_cell_size_2),
-                ("Max Cell Size", max_cell_size_2),
-                ("Max Base Weight", max_base_weight_2),
-                ("Solver", solver_choice_2),
-                ("Conversion Rate", conversion_rate_2),
-                ("Z-Score", z_score_2),
-                ("Margin of Error", margin_of_error_2),
-                ("p (Proportion)", p_2),
-                ("Use sum(panel,fresh)?", use_sum_universe)
-            ], columns=["Parameter","Value"])
+                        # region totals, size totals
+                        region_totals = (
+                            df_alloc
+                            .groupby("Region")[["PanelAllocated","FreshAllocated"]]
+                            .sum()
+                            .assign(SampleTotal=lambda d: d["PanelAllocated"] + d["FreshAllocated"])
+                            .reset_index()
+                        )
+                        size_totals = (
+                            df_alloc
+                            .groupby("Size")[["PanelAllocated","FreshAllocated"]]
+                            .sum()
+                            .assign(SampleTotal=lambda d: d["PanelAllocated"] + d["FreshAllocated"])
+                            .reset_index()
+                        )
 
-            # Convert dimension mins to DataFrame
-            def dims_to_df(dims_dict, label):
-                rows= []
-                for dt, val_dict in dims_dict.items():
-                    for v, m in val_dict.items():
-                        rows.append((dt, v, m))
-                return pd.DataFrame(rows, columns=["DimensionType","DimensionValue","MinSample"]).assign(Scenario=label)
-            dimdf_1= dims_to_df(dimension_mins_1, label="Scenario1")
-            dimdf_2= dims_to_df(dimension_mins_2, label="Scenario2")
+                        pivot_panel = pd.pivot_table(
+                            df_alloc,
+                            index=["Region","Size"],
+                            columns="Industry",
+                            values="PanelAllocated",
+                            aggfunc='sum',
+                            fill_value=0,
+                            margins=True,
+                            margins_name="GrandTotal",
+                            sort=False
+                        ).reset_index()
 
-            scenario1_result= run_scenario(
-                total_sample_1, min_cell_size_1, max_cell_size_1, max_base_weight_1,
-                solver_choice_1, conversion_rate_1, dimension_mins_1
+                        pivot_fresh = pd.pivot_table(
+                            df_alloc,
+                            index=["Region","Size"],
+                            columns="Industry",
+                            values="FreshAllocated",
+                            aggfunc='sum',
+                            fill_value=0,
+                            margins=True,
+                            margins_name="GrandTotal",
+                            sort=False
+                        ).reset_index()
+
+                        df_combined = create_combined_table_with_totals(df_alloc)
+
+                        # reorder columns for df_combined
+                        id_cols = [c for c in ["Region","Size"] if c in df_combined.columns]
+                        gt_sample = [c for c in df_combined.columns if c=="GrandTotal_Sample"]
+                        gt_bw     = [c for c in df_combined.columns if c=="GrandTotal_BaseWeight"]
+                        sample_cols = [c for c in df_combined.columns if c.endswith("_Sample") and c not in gt_sample]
+                        bw_cols     = [c for c in df_combined.columns if c.endswith("_BaseWeight") and c not in gt_bw]
+                        new_order = id_cols + gt_sample + sample_cols + bw_cols + gt_bw
+                        df_combined = df_combined[new_order]
+
+                        # round baseweight columns
+                        subset_bw_cols = [c for c in df_combined.columns if c.endswith("_BaseWeight")]
+                        df_combined[subset_bw_cols] = df_combined[subset_bw_cols].round(1)
+
+                        # color-scale
+                        norm_bw_cols = [c for c in subset_bw_cols if c!="GrandTotal_BaseWeight"]
+                        if len(df_combined)>1 and len(norm_bw_cols)>0:
+                            norm_df = df_combined.iloc[:-1]
+                            global_min = norm_df[norm_bw_cols].min().min()
+                            global_max = norm_df[norm_bw_cols].max().max()
+                            global_mid = np.percentile(norm_df[norm_bw_cols].stack(), 50)
+                        else:
+                            global_min=0
+                            global_mid=0
+                            global_max=0
+                        custom_cmap = LinearSegmentedColormap.from_list("custom", ["#00FF00","#FFFF00","#FF0000"])
+                        norm_obj = TwoSlopeNorm(vmin=global_min,vcenter=global_mid,vmax=global_max)
+
+                        def baseweight_color(v):
+                            val = norm_obj(v)
+                            color = mcolors.to_hex(custom_cmap(val))
+                            return f"background-color: {color}"
+                        def style_bwcol(series):
+                            n=len(series)
+                            return [baseweight_color(x) if i<n-1 else "" for i,x in enumerate(series)]
+
+                        stcol = df_combined.style.apply(style_bwcol, subset=norm_bw_cols)
+
+                        # population pivot
+                        pivot_pop = pd.pivot_table(
+                            df_alloc,
+                            index=["Region","Size"],
+                            columns="Industry",
+                            values="Population",
+                            aggfunc='sum',
+                            fill_value=0,
+                            margins=True,
+                            margins_name="GrandTotal",
+                            sort=False
+                        ).reset_index()
+
+                        # proportional pivot
+                        pivot_propsample= pd.pivot_table(
+                            df_alloc,
+                            index=["Region","Size"],
+                            columns="Industry",
+                            values="PropSample",
+                            aggfunc='mean',
+                            fill_value=0,
+                            margins=False,
+                            sort=False
+                        ).reset_index()
+                        num_cols = pivot_propsample.select_dtypes(include="number").columns
+                        pivot_propsample[num_cols] = (
+                            pivot_propsample[num_cols].round(0).fillna(0).astype(int)
+                        )
+
+                        scenario_result["region_totals"] = region_totals
+                        scenario_result["size_totals"]   = size_totals
+                        scenario_result["pivot_panel"]   = pivot_panel
+                        scenario_result["pivot_fresh"]   = pivot_fresh
+                        scenario_result["df_combined"]   = df_combined
+                        scenario_result["df_combined_style"] = stcol
+                        scenario_result["pivot_pop"]     = pivot_pop
+                        scenario_result["pivot_propsample"] = pivot_propsample
+
+                except ValueError as e:
+                    if "No solver found a feasible solution" in str(e):
+                        # do slack diag
+                        df_long = df_adjusted.melt(
+                            id_vars=["Region","Size"],
+                            var_name="Industry",
+                            value_name="Population"
+                        ).fillna(0)
+                        diag_sol, diag_usage, diag_status = diagnose_infeasibility_slacks(
+                            df_long,
+                            total_sample,
+                            min_cell,
+                            max_cell,
+                            max_bw,
+                            dimension_mins,
+                            conv_rate
+                        )
+                        scenario_result["success"]=False
+                        scenario_result["error_msg"] = str(e)
+                        scenario_result["diag_sol"] = diag_sol
+                        scenario_result["diag_usage"] = diag_usage
+                        scenario_result["diag_status"] = diag_status
+                    else:
+                        scenario_result["success"]=False
+                        scenario_result["error_msg"] = str(e)
+                except Exception as e2:
+                    scenario_result["success"] = False
+                    scenario_result["error_msg"] = f"Solver Error: {e2}"
+                return scenario_result
+
+            # run scenario 1
+            scenario1_result = run_scenario(
+                label="Scenario1_",
+                total_sample=total_sample_1,
+                min_cell=min_cell_size_1,
+                max_cell=max_cell_size_1,
+                max_bw=max_base_weight_1,
+                solver=solver_choice_1,
+                conv_rate=conversion_rate_1,
+                dimension_mins=dimension_mins_1
             )
-            scenario2_result= run_scenario(
-                total_sample_2, min_cell_size_2, max_cell_size_2, max_base_weight_2,
-                solver_choice_2, conversion_rate_2, dimension_mins_2
+
+            # run scenario 2
+            scenario2_result = run_scenario(
+                label="Scenario2_",
+                total_sample=total_sample_2,
+                min_cell=min_cell_size_2,
+                max_cell=max_cell_size_2,
+                max_bw=max_base_weight_2,
+                solver=solver_choice_2,
+                conv_rate=conversion_rate_2,
+                dimension_mins=dimension_mins_2
             )
 
+            # show scenario 1
             st.header("Scenario 1 Results")
             if not scenario1_result["success"]:
-                # conflicts or error
+                # conflict or solver error
                 if "cell_conflicts" in scenario1_result:
-                    st.error("Single-constraint conflict(s) found (Scenario 1)")
-                    oc= scenario1_result["overall_conflicts"]
-                    if oc is not None and not oc.empty:
-                        st.subheader("Overall Conflicts (S1)")
-                        st.data_editor(oc, key="s1_overall_conf", use_container_width=True)
-                    cc= scenario1_result["cell_conflicts"]
-                    if cc is not None and not cc.empty:
-                        st.subheader("Cell Conflicts (S1)")
-                        st.data_editor(cc, key="s1_cell_conf", use_container_width=True)
-                    dc= scenario1_result["dim_conflicts"]
-                    if dc is not None and not dc.empty:
-                        st.subheader("Dimension Conflicts (S1)")
-                        st.data_editor(dc, key="s1_dim_conf", use_container_width=True)
+                    st.error("Single-constraint conflict(s) for Scenario 1.")
+                    df_overall_1 = scenario1_result["overall_conflicts"]
+                    df_dim_conf_1= scenario1_result["dim_conflicts"]
+                    df_cell_conf_1= scenario1_result["cell_conflicts"]
+                    if df_overall_1 is not None and not df_overall_1.empty:
+                        st.subheader("Overall Conflicts (Scenario 1)")
+                        st.data_editor(df_overall_1, use_container_width=True, key="s1_overall_conf")
+                    if df_dim_conf_1 is not None and not df_dim_conf_1.empty:
+                        st.subheader("Dimension Conflicts (Scenario 1)")
+                        st.data_editor(df_dim_conf_1, use_container_width=True, key="s1_dim_conf")
+                    if df_cell_conf_1 is not None and not df_cell_conf_1.empty:
+                        st.subheader("Cell Conflicts (Scenario 1)")
+                        st.data_editor(df_cell_conf_1, use_container_width=True, key="s1_cell_conf")
                 elif "error_msg" in scenario1_result:
                     st.error(scenario1_result["error_msg"])
                     if "diag_sol" in scenario1_result:
-                        st.warning("Slack-based diagnostic (S1)")
-                        st.dataframe(scenario1_result["diag_sol"], key="s1_diag_sol")
-                        st.dataframe(scenario1_result["diag_usage"], key="s1_diag_usage")
-                        st.write(f"Status: {scenario1_result['diag_status']}")
+                        st.warning("Slack-based diagnostic for Scenario 1:")
+                        diag_sol1 = scenario1_result["diag_sol"]
+                        diag_usage1 = scenario1_result.get("diag_usage", pd.DataFrame())
+                        diag_status1= scenario1_result.get("diag_status", "")
+                        if diag_sol1 is not None:
+                            st.dataframe(diag_sol1, key="s1_diag_sol")
+                        if diag_usage1 is not None and not diag_usage1.empty:
+                            st.dataframe(diag_usage1, key="s1_diag_usage")
+                        if diag_status1:
+                            st.write(f"Diagnostic solver status: {diag_status1}")
             else:
                 # success
-                st.success(f"Solved with solver: {scenario1_result['solverinfo']}")
-                st.subheader("Panel Allocation (Scenario 1)")
-                st.data_editor(scenario1_result["pivot_panel"], key="s1_panel", use_container_width=True)
-                st.subheader("Fresh Allocation (Scenario 1)")
-                st.data_editor(scenario1_result["pivot_fresh"], key="s1_fresh", use_container_width=True)
+                solver1_info = scenario1_result["solver_info"]
+                st.success(f"Solved with solver: {solver1_info}")
+                st.subheader("Panel (Scenario 1)")
+                st.data_editor(scenario1_result["pivot_panel"], use_container_width=True, key="s1_panel")
+                st.subheader("Fresh (Scenario 1)")
+                st.data_editor(scenario1_result["pivot_fresh"], use_container_width=True, key="s1_fresh")
+
                 st.subheader("Allocated Sample & Base Weights (Scenario 1)")
                 st.dataframe(scenario1_result["df_combined_style"], key="s1_combined")
-                st.subheader("Region Totals (Scenario 1)")
-                st.data_editor(scenario1_result["region_totals"], key="s1_region_totals", use_container_width=True)
-                st.subheader("Size Totals (Scenario 1)")
-                st.data_editor(scenario1_result["size_totals"], key="s1_size_totals", use_container_width=True)
 
+                st.subheader("Region-wise Sample Totals (Scenario 1)")
+                st.data_editor(scenario1_result["region_totals"], use_container_width=True, key="s1_region_totals")
+
+                st.subheader("Size-wise Sample Totals (Scenario 1)")
+                st.data_editor(scenario1_result["size_totals"], use_container_width=True, key="s1_size_totals")
+
+                st.subheader("Proportional Sample (Scenario 1)")
+                st.dataframe(scenario1_result["pivot_propsample"], key="s1_prop")
+
+            # show scenario 2
             st.header("Scenario 2 Results")
             if not scenario2_result["success"]:
-                # conflict
+                # conflict or solver error
                 if "cell_conflicts" in scenario2_result:
-                    st.error("Single-constraint conflict(s) found (Scenario 2)")
-                    oc= scenario2_result["overall_conflicts"]
-                    if oc is not None and not oc.empty:
-                        st.subheader("Overall Conflicts (S2)")
-                        st.data_editor(oc, key="s2_overall_conf", use_container_width=True)
-                    cc= scenario2_result["cell_conflicts"]
-                    if cc is not None and not cc.empty:
-                        st.subheader("Cell Conflicts (S2)")
-                        st.data_editor(cc, key="s2_cell_conf", use_container_width=True)
-                    dc= scenario2_result["dim_conflicts"]
-                    if dc is not None and not dc.empty:
-                        st.subheader("Dimension Conflicts (S2)")
-                        st.data_editor(dc, key="s2_dim_conf", use_container_width=True)
+                    st.error("Single-constraint conflict(s) for Scenario 2.")
+                    df_overall_2 = scenario2_result["overall_conflicts"]
+                    df_dim_conf_2= scenario2_result["dim_conflicts"]
+                    df_cell_conf_2= scenario2_result["cell_conflicts"]
+                    if df_overall_2 is not None and not df_overall_2.empty:
+                        st.subheader("Overall Conflicts (Scenario 2)")
+                        st.data_editor(df_overall_2, use_container_width=True, key="s2_overall_conf")
+                    if df_dim_conf_2 is not None and not df_dim_conf_2.empty:
+                        st.subheader("Dimension Conflicts (Scenario 2)")
+                        st.data_editor(df_dim_conf_2, use_container_width=True, key="s2_dim_conf")
+                    if df_cell_conf_2 is not None and not df_cell_conf_2.empty:
+                        st.subheader("Cell Conflicts (Scenario 2)")
+                        st.data_editor(df_cell_conf_2, use_container_width=True, key="s2_cell_conf")
                 elif "error_msg" in scenario2_result:
                     st.error(scenario2_result["error_msg"])
                     if "diag_sol" in scenario2_result:
-                        st.warning("Slack-based diagnostic (S2)")
-                        st.dataframe(scenario2_result["diag_sol"], key="s2_diag_sol")
-                        st.dataframe(scenario2_result["diag_usage"], key="s2_diag_usage")
-                        st.write(f"Status: {scenario2_result['diag_status']}")
+                        st.warning("Slack-based diagnostic for Scenario 2:")
+                        diag_sol2 = scenario2_result["diag_sol"]
+                        diag_usage2 = scenario2_result.get("diag_usage", pd.DataFrame())
+                        diag_status2= scenario2_result.get("diag_status", "")
+                        if diag_sol2 is not None:
+                            st.dataframe(diag_sol2, key="s2_diag_sol")
+                        if not diag_usage2.empty:
+                            st.dataframe(diag_usage2, key="s2_diag_usage")
+                        if diag_status2:
+                            st.write(f"Diagnostic solver status: {diag_status2}")
             else:
                 # success
-                st.success(f"Solved with solver: {scenario2_result['solverinfo']}")
-                st.subheader("Panel Allocation (Scenario 2)")
-                st.data_editor(scenario2_result["pivot_panel"], key="s2_panel", use_container_width=True)
-                st.subheader("Fresh Allocation (Scenario 2)")
-                st.data_editor(scenario2_result["pivot_fresh"], key="s2_fresh", use_container_width=True)
+                solver2_info = scenario2_result["solver_info"]
+                st.success(f"Solved with solver: {solver2_info}")
+                st.subheader("Panel (Scenario 2)")
+                st.data_editor(scenario2_result["pivot_panel"], use_container_width=True, key="s2_panel")
+                st.subheader("Fresh (Scenario 2)")
+                st.data_editor(scenario2_result["pivot_fresh"], use_container_width=True, key="s2_fresh")
+
                 st.subheader("Allocated Sample & Base Weights (Scenario 2)")
                 st.dataframe(scenario2_result["df_combined_style"], key="s2_combined")
-                st.subheader("Region Totals (Scenario 2)")
-                st.data_editor(scenario2_result["region_totals"], key="s2_region_totals", use_container_width=True)
-                st.subheader("Size Totals (Scenario 2)")
-                st.data_editor(scenario2_result["size_totals"], key="s2_size_totals", use_container_width=True)
 
-            # ---------- Side-by-side table -------------
-            st.header("Side-by-Side Comparison Table (Samples & Base Weights)")
-            # only if both scenarios succeeded
+                st.subheader("Region-wise Sample Totals (Scenario 2)")
+                st.data_editor(scenario2_result["region_totals"], use_container_width=True, key="s2_region_totals")
+
+                st.subheader("Size-wise Sample Totals (Scenario 2)")
+                st.data_editor(scenario2_result["size_totals"], use_container_width=True, key="s2_size_totals")
+
+                st.subheader("Proportional Sample (Scenario 2)")
+                st.dataframe(scenario2_result["pivot_propsample"], key="s2_prop")
+
+            # -------------- COMPARISON --------------
+            st.header("Comparison: Scenario 1 minus Scenario 2")
             if scenario1_result.get("success") and scenario2_result.get("success"):
-                df_s1 = scenario1_result["df_alloc"].copy()
-                df_s2 = scenario2_result["df_alloc"].copy()
-                # keep Region/Size/Industry + sample/baseweight
-                s1_cols = ["Region","Size","Industry","OptimizedSample","BaseWeight"]
-                s2_cols = ["Region","Size","Industry","OptimizedSample","BaseWeight"]
-                df_s1 = df_s1[s1_cols]
-                df_s2 = df_s2[s2_cols]
-                merged = pd.merge(
-                    df_s1, df_s2,
-                    on=["Region","Size","Industry"],
-                    how="outer",
-                    suffixes=("_S1","_S2")
-                )
-                # difference
-                merged["SampleDiff"]  = merged["OptimizedSample_S1"] - merged["OptimizedSample_S2"]
-                merged["BaseWDiff"]   = merged["BaseWeight_S1"] - merged["BaseWeight_S2"]
-                # round (which is typically integer anyway)
-                numeric_cols = merged.select_dtypes(include="number").columns
-                merged[numeric_cols] = merged[numeric_cols].round(0).astype(int, errors="ignore")
+                dfc1 = scenario1_result["df_combined"].copy().reset_index(drop=True)
+                dfc2 = scenario2_result["df_combined"].copy().reset_index(drop=True)
+                common_cols = [c for c in dfc1.columns if c in dfc2.columns]
+                dfc1 = dfc1[common_cols]
+                dfc2 = dfc2[common_cols]
+                numeric_cols = [c for c in common_cols if pd.api.types.is_numeric_dtype(dfc1[c])]
+                df_diff = dfc1.copy()
+                for col in numeric_cols:
+                    df_diff[col] = dfc1[col] - dfc2[col]
 
-                st.data_editor(merged, key="side_by_side_alloc", use_container_width=True)
+                def color_diff(val):
+                    if pd.isna(val):
+                        return ""
+                    if val>0:
+                        return "background-color:#b3ffb3"
+                    elif val<0:
+                        return "background-color:#ffb3b3"
+                    else:
+                        return ""
+                df_diff_style = df_diff.style.applymap(color_diff, subset=numeric_cols)
+                st.dataframe(df_diff_style, key="comparison_df_diff")
 
-            # ---------- Download (HTML & Excel) ----------
+            # ---------- HTML & Excel downloads ----------
+            # We'll collect scenario sections for HTML
             scenario_sections = []
-            scenario_sections.append(("Parameters (Scenario 1)", params_1))
-            scenario_sections.append(("Parameters (Scenario 2)", params_2))
-            scenario_sections.append(("Dimension Minimums (Scenario 1)", dimdf_1))
-            scenario_sections.append(("Dimension Minimums (Scenario 2)", dimdf_2))
-
-            # If scenario1 succeeded
+            # scenario 1
             if scenario1_result.get("success"):
-                scenario_sections.append(("Scenario 1: Allocated Sample & Base Weights", scenario1_result["df_combined_style"]))
-
-            # If scenario2 succeeded
+                scenario_sections.append(("Scenario 1: Allocated Sample & Base Weights",
+                                          scenario1_result["df_combined_style"]))
+            # scenario 2
             if scenario2_result.get("success"):
-                scenario_sections.append(("Scenario 2: Allocated Sample & Base Weights", scenario2_result["df_combined_style"]))
-
-            # Side-by-side table
+                scenario_sections.append(("Scenario 2: Allocated Sample & Base Weights",
+                                          scenario2_result["df_combined_style"]))
+            # difference
             if scenario1_result.get("success") and scenario2_result.get("success"):
-                scenario_sections.append(("Side-by-Side Comparison Table", merged))
+                scenario_sections.append(("Scenario 1 vs. 2 Difference", df_diff_style))
 
-            html_bytes = dfs_to_html(scenario_sections, page_title=base_filename)
-            st.download_button(
-                label="Download HTML",
-                data=html_bytes,
-                file_name=f"{base_filename}_comparison.html",
-                mime="text/html"
-            )
+            if scenario_sections:
+                html_bytes = dfs_to_html(scenario_sections, page_title=display_title)
+                html_fname = f"{base_filename}_comparison_snapshot.html"
+                st.download_button(
+                    label="🌐 Download comparison as HTML",
+                    data=html_bytes,
+                    file_name=html_fname,
+                    mime="text/html"
+                )
 
-            # Excel
-            excel_out= io.BytesIO()
+            # For Excel, we combine scenario1 & scenario2 sheets in *one* workbook
+            excel_out = io.BytesIO()
             with pd.ExcelWriter(excel_out, engine="openpyxl") as writer:
-                # 1) Scenario 1 parameters
-                params_1.to_excel(writer, sheet_name="S1_Parameters", index=False)
-                # 2) Scenario 2 parameters
-                params_2.to_excel(writer, sheet_name="S2_Parameters", index=False)
-                # 3) Dim mins
-                dimdf_1.to_excel(writer, sheet_name="S1_DimMins", index=False)
-                dimdf_2.to_excel(writer, sheet_name="S2_DimMins", index=False)
-
-                def write_scenario_tables(scenario_result, label):
-                    # region panel/fresh, combined, population, propsample
-                    # We'll do 1 sheet each for: panel, fresh, combined, pop, propsample
-                    df_panel = scenario_result["pivot_panel"]
-                    df_fresh = scenario_result["pivot_fresh"]
-                    df_comb  = scenario_result["df_combined"]
-                    pop      = scenario_result["pivot_pop"]
-                    propsamp = scenario_result["pivot_propsample"]
-
-                    df_panel.to_excel(writer, sheet_name=f"{label}_Panel", index=False)
-                    df_fresh.to_excel(writer, sheet_name=f"{label}_Fresh", index=False)
-                    df_comb.to_excel(writer, sheet_name=f"{label}_SampleBase", index=False)
-                    pop.to_excel(writer, sheet_name=f"{label}_Population", index=False)
-                    propsamp.to_excel(writer, sheet_name=f"{label}_PropSample", index=False)
-
-                # scenario 1
+                # scenario1
                 if scenario1_result.get("success"):
-                    write_scenario_tables(scenario1_result, "S1")
+                    write_scenario_sheets_to_writer(
+                        writer=writer,
+                        df_combined=scenario1_result["df_combined"],
+                        pivot_population=scenario1_result["pivot_pop"].set_index(["Region","Size"]).drop(columns="GrandTotal", errors="ignore"),
+                        pivot_propsample=scenario1_result["pivot_propsample"].set_index(["Region","Size"]),
+                        scenario_label="S1_"
+                    )
 
-                # scenario 2
+                # scenario2
                 if scenario2_result.get("success"):
-                    write_scenario_tables(scenario2_result, "S2")
+                    write_scenario_sheets_to_writer(
+                        writer=writer,
+                        df_combined=scenario2_result["df_combined"],
+                        pivot_population=scenario2_result["pivot_pop"].set_index(["Region","Size"]).drop(columns="GrandTotal", errors="ignore"),
+                        pivot_propsample=scenario2_result["pivot_propsample"].set_index(["Region","Size"]),
+                        scenario_label="S2_"
+                    )
 
-                # side by side
+                # difference sheet if both success
                 if scenario1_result.get("success") and scenario2_result.get("success"):
-                    merged.to_excel(writer, sheet_name="S1vsS2_SideBySide", index=False)
+                    diff_sheet = writer.book.create_sheet("ScenarioDiff")
+                    # We'll store df_diff as is
+                    df_diff = df_diff.reset_index(drop=True)
+                    col_headers = list(df_diff.columns)
+                    diff_sheet.append(col_headers)
+                    for rowvals in df_diff.values:
+                        diff_sheet.append(list(rowvals))
 
             excel_out.seek(0)
             st.download_button(
-                label="Download Excel",
+                label="Download Combined Excel (Both Scenarios)",
                 data=excel_out.getvalue(),
                 file_name=f"{base_filename}_comparison.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -957,4 +1112,5 @@ def main():
         st.warning("Please upload an Excel file first.")
 
 if __name__=="__main__":
+    import cvxpy as cp
     main()
