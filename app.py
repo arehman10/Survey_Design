@@ -1445,7 +1445,14 @@ def main():
                     "FreshAllocated":"S2_Fresh",
                     "SampleTotal":"S2_Total"
                 })
-                region_totals_combined = pd.merge(r1, r2, on="Region", how="outer")
+               region_totals_combined = (
+                    pd.merge(r1, r2, on="Region", how="outer")
+                      .loc[:, ["Region",
+                               "S1_Panel","S2_Panel",
+                               "S1_Fresh","S2_Fresh",
+                               "S1_Total","S2_Total"]]
+                )
+
             
                 sz1 = scenario1_result["size_totals"].rename(columns={
                     "PanelAllocated":"S1_Panel",
@@ -1457,7 +1464,13 @@ def main():
                     "FreshAllocated":"S2_Fresh",
                     "SampleTotal":"S2_Total"
                 })
-                size_totals_combined = pd.merge(sz1, sz2, on="Size", how="outer")
+                size_totals_combined = (
+                    pd.merge(sz1, sz2, on="Size", how="outer")
+                      .loc[:, ["Size",
+                               "S1_Panel","S2_Panel",
+                               "S1_Fresh","S2_Fresh",
+                               "S1_Total","S2_Total"]]
+                )
             
                 sheet_tot = "TotalsByRegionAndSize"
                 region_totals_combined.to_excel(writer, sheet_name=sheet_tot, index=False, startrow=0)
