@@ -1489,7 +1489,7 @@ def main():
                 ws_cmp = writer.sheets[sheet_cmp]
             
                 # apply gradient to the BaseWeight diff columns (exclude GrandTotal_BaseWeight)
-                apply_color_scale(df_diff_out, row_offset=0)
+             #   apply_color_scale(df_diff_out, row_offset=0)
 
             
             # rewind & download
