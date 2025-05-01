@@ -13,6 +13,9 @@ import base64
 import textwrap, html
 import swiglpk as glpk  # If needed for GLPK
 from pandas.io.formats.style import Styler
+import uuid
+import json
+import os
 
 ###############################################################################
 # 1) HELPER FUNCTIONS
