@@ -1318,31 +1318,38 @@ def main():
             
                 col_order = [c for c in col_order if c in df_out.columns]
                 return df_out[col_order]
-
+        
+            # grab the exact Region/Size order from df_adjusted
+            region_order = df_adjusted["Region"].dropna().drop_duplicates().tolist()
+            size_order   = df_adjusted["Size"].dropna().drop_duplicates().tolist()
             
-            # For Excel, we combine scenario1 & scenario2 sheets in *one* workbook
             excel_out = io.BytesIO()
             with pd.ExcelWriter(excel_out, engine="openpyxl") as writer:
-        
+            
                 # 1) Adjusted Universe
                 df_adjusted.to_excel(writer, sheet_name="Adjusted_Universe", index=False)
             
-                # 2) Parameters & Cell-Minimums side-by-side
+                # 2) Parameters & Cell Minimums side-by-side
                 params_comp = pd.DataFrame({
                     "Parameter": params_df["Parameter"],
                     "S1_Value":  params_df["Value"],
                     "S2_Value":  params_df2["Value"],
                 })
+            
+                # merge and then reindex to match df_adjusted order
                 region_mins = pd.merge(
                     region_min_df.rename(columns={"MinNeeded":"S1_MinNeeded"}),
                     region_min_df2.rename(columns={"MinNeeded":"S2_MinNeeded"}),
                     on="Region", how="outer"
-                )
-                size_mins   = pd.merge(
+                ).set_index("Region").reindex(region_order).reset_index()
+            
+                size_mins = pd.merge(
                     size_min_df.rename(columns={"MinNeeded":"S1_MinNeeded"}),
                     size_min_df2.rename(columns={"MinNeeded":"S2_MinNeeded"}),
                     on="Size", how="outer"
-                )
+                ).set_index("Size").reindex(size_order).reset_index()
+            
+                # industry order left as-is
                 industry_mins = pd.merge(
                     industry_min_df.rename(columns={"MinNeeded":"S1_MinNeeded"}),
                     industry_min_df2.rename(columns={"MinNeeded":"S2_MinNeeded"}),
@@ -1350,74 +1357,63 @@ def main():
                 )
             
                 sheet_pm = "ParametersAndMins"
-                # write parameters
                 params_comp.to_excel(writer, sheet_name=sheet_pm, index=False, startrow=0)
                 r = params_comp.shape[0] + 2
-                # write region minimums
                 region_mins.to_excel(writer, sheet_name=sheet_pm, index=False, startrow=r)
                 r += region_mins.shape[0] + 2
-                # write size minimums
                 size_mins.to_excel(writer, sheet_name=sheet_pm, index=False, startrow=r)
                 r += size_mins.shape[0] + 2
-                # write industry minimums
                 industry_mins.to_excel(writer, sheet_name=sheet_pm, index=False, startrow=r)
             
-                # 3) Combined Sample_with_baseweight table for S1 & S2
-                def reorder_df(df):
+                # 3) All Samples & BaseWeights (S1 & S2 stacked)
+                def reorder_samples(df):
                     df_out = df.reset_index().copy()
-                    cols = [c for c in ("Region","Size") if c in df_out.columns]
-                    samp, bw = [], []
+                    base_cols = [c for c in ("Region","Size") if c in df_out.columns]
+                    sample_cols, bw_cols = [], []
                     for ind in industries_in_input:
                         s, b = f"{ind}_Sample", f"{ind}_BaseWeight"
-                        if s in df_out.columns: samp.append(s)
-                        if b in df_out.columns: bw.append(b)
+                        if s in df_out.columns: sample_cols.append(s)
+                        if b in df_out.columns: bw_cols.append(b)
                     extras = [c for c in ("GrandTotal_Sample","GrandTotal_BaseWeight")
                               if c in df_out.columns]
-                    return df_out[cols + samp + bw + extras]
+                    return df_out[base_cols + sample_cols + bw_cols + extras]
             
-                s1_out = reorder_df(scenario1_result["df_combined"])
-                s2_out = reorder_df(scenario2_result["df_combined"])
+                s1_sb = reorder_samples(scenario1_result["df_combined"])
+                s2_sb = reorder_samples(scenario2_result["df_combined"])
             
                 sheet_sb = "All_Samples_and_BaseWeights"
-                # write Scenario 1
-                s1_out.to_excel(writer, sheet_name=sheet_sb, startrow=0, index=False)
-                # write Scenario 2 below Scenario 1 (with one blank row)
-                start_row = s1_out.shape[0] + 2
-                s2_out.to_excel(writer, sheet_name=sheet_sb, startrow=start_row, index=False)
+                s1_sb.to_excel(writer, sheet_name=sheet_sb, startrow=0, index=False)
+                start_sb = s1_sb.shape[0] + 2
+                s2_sb.to_excel(writer, sheet_name=sheet_sb, startrow=start_sb, index=False)
             
-                ws = writer.sheets[sheet_sb]
-            
+                ws_sb = writer.sheets[sheet_sb]
                 def apply_color_scale(df_block, row_offset):
-                    # pick only BaseWeight cols (excluding GrandTotal_BaseWeight)
                     real_bw = [c for c in df_block.columns
-                               if c.endswith("_BaseWeight") and c != "GrandTotal_BaseWeight"]
-                    if len(df_block) > 1 and real_bw:
-                        # use all but the final (GrandTotal) row to compute vmin/vmax
+                               if c.endswith("_BaseWeight") and c!="GrandTotal_BaseWeight"]
+                    if len(df_block)>1 and real_bw:
                         sub = df_block.iloc[:-1]
                         vmin = sub[real_bw].min().min()
                         vmax = sub[real_bw].max().max()
-                        vmid = np.percentile(sub[real_bw].stack(), 50)
+                        vmid = np.percentile(sub[real_bw].stack(),50)
                         rule = ColorScaleRule(
                             start_type="num", start_value=vmin, start_color="00FF00",
                             mid_type="num",   mid_value=vmid,  mid_color="FFFF00",
                             end_type="num",   end_value=vmax,  end_color="FF0000",
                         )
                         n = df_block.shape[0]
-                        first_data_row = row_offset + 2
-                        last_data_row  = row_offset + n   # excludes the GrandTotal row
+                        top = row_offset + 2
+                        bottom = row_offset + n
                         for col in real_bw:
-                            idx = df_block.columns.get_loc(col) + 1  # Excel is 1-based
+                            idx = df_block.columns.get_loc(col)+1
                             letter = get_column_letter(idx)
-                            rng = f"{letter}{first_data_row}:{letter}{last_data_row}"
-                            ws.conditional_formatting.add(rng, rule)
-                            # format numbers to one decimal
-                            for cell in ws[f"{letter}{first_data_row}":f"{letter}{last_data_row}"]:
+                            ws_sb.conditional_formatting.add(f"{letter}{top}:{letter}{bottom}", rule)
+                            for cell in ws_sb[f"{letter}{top}":f"{letter}{bottom}"]:
                                 cell[0].number_format = "0.0"
             
-                # apply color scale to each block (GrandTotal row excluded)
-                apply_color_scale(s1_out, row_offset=0)
-                apply_color_scale(s2_out, row_offset=start_row)
-                 # 4) Combined Panel Allocated (S1 & S2 stacked)
+                apply_color_scale(s1_sb, row_offset=0)
+                apply_color_scale(s2_sb, row_offset=start_sb)
+            
+                # 4) Panel Allocations (S1 & S2 stacked)
                 def reorder_panel(df):
                     cols = [c for c in ("Region","Size") if c in df.columns]
                     inds = [c for c in industries_in_input if c in df.columns]
@@ -1431,57 +1427,38 @@ def main():
                 p1.to_excel(writer, sheet_name=sheet_p, startrow=0, index=False)
                 start_p = p1.shape[0] + 2
                 p2.to_excel(writer, sheet_name=sheet_p, startrow=start_p, index=False)
-
-
-                
-                # 5) Region-wise & Size-wise Sample Totals side-by-side
+            
+                # 5) Region-wise & Size-wise Totals side-by-side, in Adjusted order
                 r1 = scenario1_result["region_totals"].rename(columns={
-                    "PanelAllocated":"S1_Panel",
-                    "FreshAllocated":"S1_Fresh",
-                    "SampleTotal":"S1_Total"
-                })
+                    "PanelAllocated":"S1_Panel","FreshAllocated":"S1_Fresh","SampleTotal":"S1_Total"
+                }).set_index("Region").reindex(region_order).reset_index()
+            
                 r2 = scenario2_result["region_totals"].rename(columns={
-                    "PanelAllocated":"S2_Panel",
-                    "FreshAllocated":"S2_Fresh",
-                    "SampleTotal":"S2_Total"
-                })
-                region_totals_combined = (
-                    pd.merge(r1, r2, on="Region", how="outer")
-                      .loc[:, ["Region",
-                               "S1_Panel","S2_Panel",
-                               "S1_Fresh","S2_Fresh",
-                               "S1_Total","S2_Total"]]
-                )
-
+                    "PanelAllocated":"S2_Panel","FreshAllocated":"S2_Fresh","SampleTotal":"S2_Total"
+                }).set_index("Region").reindex(region_order).reset_index()
+            
+                region_totals_combined = pd.merge(r1, r2, on="Region", how="outer").loc[
+                    :, ["Region","S1_Panel","S2_Panel","S1_Fresh","S2_Fresh","S1_Total","S2_Total"]
+                ]
             
                 sz1 = scenario1_result["size_totals"].rename(columns={
-                    "PanelAllocated":"S1_Panel",
-                    "FreshAllocated":"S1_Fresh",
-                    "SampleTotal":"S1_Total"
-                })
+                    "PanelAllocated":"S1_Panel","FreshAllocated":"S1_Fresh","SampleTotal":"S1_Total"
+                }).set_index("Size").reindex(size_order).reset_index()
+            
                 sz2 = scenario2_result["size_totals"].rename(columns={
-                    "PanelAllocated":"S2_Panel",
-                    "FreshAllocated":"S2_Fresh",
-                    "SampleTotal":"S2_Total"
-                })
-                size_totals_combined = (
-                    pd.merge(sz1, sz2, on="Size", how="outer")
-                      .loc[:, ["Size",
-                               "S1_Panel","S2_Panel",
-                               "S1_Fresh","S2_Fresh",
-                               "S1_Total","S2_Total"]]
-                )
+                    "PanelAllocated":"S2_Panel","FreshAllocated":"S2_Fresh","SampleTotal":"S2_Total"
+                }).set_index("Size").reindex(size_order).reset_index()
+            
+                size_totals_combined = pd.merge(sz1, sz2, on="Size", how="outer").loc[
+                    :, ["Size","S1_Panel","S2_Panel","S1_Fresh","S2_Fresh","S1_Total","S2_Total"]
+                ]
             
                 sheet_tot = "TotalsByRegionAndSize"
                 region_totals_combined.to_excel(writer, sheet_name=sheet_tot, index=False, startrow=0)
                 start_tot = region_totals_combined.shape[0] + 2
-                size_totals_combined.to_excel(
-                    writer,
-                    sheet_name=sheet_tot,
-                    index=False,
-                    startrow=start_tot
-                )
+                size_totals_combined.to_excel(writer, sheet_name=sheet_tot, index=False, startrow=start_tot)
             
+            # rewind & download
             excel_out.seek(0)
             st.download_button(
                 label="📥 Download Combined Excel",
