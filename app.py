@@ -934,12 +934,12 @@ def main():
 
                         scenario_result["region_totals"] = region_totals
                         scenario_result["size_totals"]   = size_totals
-                        scenario_result["pivot_panel"]   = pivot_panel
                         scenario_result["pivot_fresh"]   = pivot_fresh
+                        scenario_result["pivot_panel"]   = pivot_panel
                         scenario_result["df_combined"]   = df_combined
                         scenario_result["df_combined_style"] = stcol
                         scenario_result["pivot_pop"]     = pivot_pop
-                        scenario_result["pivot_propsample"] = pivot_propsample
+                     #   scenario_result["pivot_propsample"] = pivot_propsample
 
                 except ValueError as e:
                     if "No solver found a feasible solution" in str(e):
@@ -1158,7 +1158,6 @@ def main():
                         writer=writer,
                         df_combined=scenario1_result["df_combined"],
                         pivot_population=scenario1_result["pivot_pop"].set_index(["Region","Size"]).drop(columns="GrandTotal", errors="ignore"),
-                    #    pivot_propsample=scenario1_result["pivot_propsample"].set_index(["Region","Size"]),
                         scenario_label="S1_"
                     )
 
@@ -1167,8 +1166,6 @@ def main():
                     write_scenario_sheets_to_writer(
                         writer=writer,
                         df_combined=scenario2_result["df_combined"],
-                        pivot_population=scenario2_result["pivot_pop"].set_index(["Region","Size"]).drop(columns="GrandTotal", errors="ignore"),
-                    #    pivot_propsample=scenario2_result["pivot_propsample"].set_index(["Region","Size"]),
                         scenario_label="S2_"
                     )
 
