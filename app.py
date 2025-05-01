@@ -1323,99 +1323,77 @@ def main():
             # For Excel, we combine scenario1 & scenario2 sheets in *one* workbook
             excel_out = io.BytesIO()
             with pd.ExcelWriter(excel_out, engine="openpyxl") as writer:
-                 # 1) Single "Adjusted_Universe" sheet
+                # 1) Adjusted Universe
                 df_adjusted.to_excel(writer, sheet_name="Adjusted_Universe", index=False)
-                # 2) COMBINED PARAMETERS SHEET
-                # ----------------------------------------------------------------
-                # tag each params_df so you know which scenario it came from
-                params_df["Scenario"] = "Scenario 1"
-                params_df2["Scenario"] = "Scenario 2"]
+            
+                # 2) Combined Parameters & Mins
+                params_df["Scenario"]  = "Scenario 1"
+                params_df2["Scenario"] = "Scenario 2"
                 combined_params = pd.concat([params_df, params_df2], ignore_index=True)
-
-                # write once
-                combined_params.to_excel(
-                    writer,
-                    sheet_name="ParametersAndMins",
-                    index=False
-                )
-                
-                # 3) COMBINED “Sample_with_baseweight” SHEET
-                # ----------------------------------------------------------------
-                # prepare the two dataframes with your existing reorder logic:
-                s1_out = reorder_scenario_df( scenario1_result["df_combined"] )
-                s2_out = reorder_scenario_df( scenario2_result["df_combined"] )
-                
-                # pick a single sheet name
+                combined_params.to_excel(writer, sheet_name="ParametersAndMins", index=False)
+            
+                # 3) Combined Samples & BaseWeights sheet
                 sheet = "All_Samples_and_BaseWeights"
-                
-                # write S1 at the top
-                start_row = 0
-                s1_out.to_excel(writer, sheet_name=sheet, startrow=start_row, index=False)
-                
-                # leave one blank row, then write S2 immediately below
+            
+                def reorder_df(df):
+                    # bring Region/Size into columns
+                    df_out = df.reset_index().copy()
+                    # build column order
+                    col_order = [c for c in ("Region","Size") if c in df_out.columns]
+                    sample_cols, bw_cols = [], []
+                    for ind in industries_in_input:
+                        s = f"{ind}_Sample"
+                        b = f"{ind}_BaseWeight"
+                        if s in df_out.columns: sample_cols.append(s)
+                        if b in df_out.columns: bw_cols.append(b)
+                    extras = [c for c in ("GrandTotal_Sample","GrandTotal_BaseWeight") if c in df_out.columns]
+                    col_order += sample_cols + bw_cols + extras
+                    return df_out[col_order]
+            
+                s1_out = reorder_df(scenario1_result["df_combined"])
+                s2_out = reorder_df(scenario2_result["df_combined"])
+            
+                # write Scenario 1 at row 0
+                s1_out.to_excel(writer, sheet_name=sheet, startrow=0, index=False)
+                # write Scenario 2 below it (one blank row in between)
                 start_row = s1_out.shape[0] + 2
                 s2_out.to_excel(writer, sheet_name=sheet, startrow=start_row, index=False)
-                
-                # now grab the worksheet and apply your color‐scale rules to each block
+            
                 ws = writer.sheets[sheet]
-                
-                # e.g. for S1’s BaseWeight columns (which you already know are at fixed Excel cols):
-                apply_color_scale(ws, first_data_row=2, last_data_row=s1_out.shape[0]+1, ...)
-                
-                # and then for S2’s (offsetting row numbers by start_row):
-                apply_color_scale(ws, first_data_row=start_row+2, last_data_row=start_row + s2_out.shape[0]+1, ...)
-                            
-                # 2) Scenario 1 => param/min sheet + allocated baseweight
-                if scenario1_result.get("success"):
-                    # a) param/min
-                    s1_params_sheet = "S1_ParametersAndMins"
-                    params_df.to_excel(writer, sheet_name=s1_params_sheet, index=False)
-                    row_offset = params_df.shape[0] + 2
             
-                    region_min_df.to_excel(writer, sheet_name=s1_params_sheet,
-                                           index=False, startrow=row_offset)
-                    row_offset += region_min_df.shape[0] + 2
+                def apply_color_scale(df_block, row_offset):
+                    # pick BaseWeight cols (excluding the GrandTotal)
+                    real_bw = [c for c in df_block.columns
+                               if c.endswith("_BaseWeight") and c!="GrandTotal_BaseWeight"]
+                    if len(df_block)>1 and real_bw:
+                        block = df_block.iloc[:-1]
+                        vmin = block[real_bw].min().min()
+                        vmax = block[real_bw].max().max()
+                        vmid = np.percentile(block[real_bw].stack(), 50)
+                    else:
+                        vmin = vmid = vmax = 0
+                    rule = ColorScaleRule(
+                        start_type="num", start_value=vmin, start_color="00FF00",
+                        mid_type="num",   mid_value=vmid,  mid_color="FFFF00",
+                        end_type="num",   end_value=vmax,  end_color="FF0000",
+                    )
+                    n = df_block.shape[0]
+                    for col in real_bw:
+                        idx = df_block.columns.get_loc(col) + 1  # Excel is 1-based
+                        letter = get_column_letter(idx)
+                        top = row_offset + 2
+                        bottom = row_offset + n + 1
+                        ws.conditional_formatting.add(f"{letter}{top}:{letter}{bottom}", rule)
+                        # force one decimal place
+                        for cell in ws[f"{letter}{top}":f"{letter}{bottom}"]:
+                            cell[0].number_format = "0.0"
             
-                    size_min_df.to_excel(writer, sheet_name=s1_params_sheet,
-                                         index=False, startrow=row_offset)
-                    row_offset += size_min_df.shape[0] + 2
+                # color Scenario 1
+                apply_color_scale(s1_out, row_offset=0)
+                # color Scenario 2
+                apply_color_scale(s2_out, row_offset=start_row)
             
-                    industry_min_df.to_excel(writer, sheet_name=s1_params_sheet,
-                                             index=False, startrow=row_offset)
-            
-                    # b) allocated sample & baseweight
-                    reorder_and_color_scenario(scenario1_result["df_combined"], "S1_Sample_with_baseweight", writer)
-            
-                # 3) Scenario 2 => param/min sheet + allocated baseweight
-                if scenario2_result.get("success"):
-                    s2_params_sheet = "S2_ParametersAndMins"
-                    params_df2.to_excel(writer, sheet_name=s2_params_sheet, index=False)
-                    ro2 = params_df2.shape[0] + 2
-            
-                    region_min_df2.to_excel(writer, sheet_name=s2_params_sheet,
-                                            index=False, startrow=ro2)
-                    ro2 += region_min_df2.shape[0] + 2
-            
-                    size_min_df2.to_excel(writer, sheet_name=s2_params_sheet,
-                                          index=False, startrow=ro2)
-                    ro2 += size_min_df2.shape[0] + 2
-            
-                    industry_min_df2.to_excel(writer, sheet_name=s2_params_sheet,
-                                              index=False, startrow=ro2)
-            
-                    reorder_and_color_scenario(scenario2_result["df_combined"], "S2_Sample_with_baseweight", writer)
-            
-                # 4) If both => difference sheet, includes region & size
-                if scenario1_result.get("success") and scenario2_result.get("success"):
-                    diff_sheet = writer.book.create_sheet("ScenarioDiff")
-                    # reorder to ensure region/size first, then columns in input order
-                    df_diff_out = reorder_diff_sheet(df_diff)
-                    df_diff_out = df_diff_out.reset_index(drop=True)
-                    col_headers = list(df_diff_out.columns)
-                    diff_sheet.append(col_headers)
-                    for rowvals in df_diff_out.values:
-                        diff_sheet.append(list(rowvals))
-            
+            # rewind & offer download
             excel_out.seek(0)
             st.download_button(
                 label="Download Combined Excel (Both Scenarios)",
