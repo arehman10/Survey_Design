@@ -939,7 +939,7 @@ def main():
                         scenario_result["df_combined"]   = df_combined
                         scenario_result["df_combined_style"] = stcol
                         scenario_result["pivot_pop"]     = pivot_pop
-                     #   scenario_result["pivot_propsample"] = pivot_propsample
+                        scenario_result["pivot_propsample"] = pivot_propsample
 
                 except ValueError as e:
                     if "No solver found a feasible solution" in str(e):
