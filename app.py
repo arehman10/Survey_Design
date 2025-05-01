@@ -1417,6 +1417,20 @@ def main():
                 # apply color scale to each block (GrandTotal row excluded)
                 apply_color_scale(s1_out, row_offset=0)
                 apply_color_scale(s2_out, row_offset=start_row)
+                 # 4) Combined Panel Allocated (S1 & S2 stacked)
+                def reorder_panel(df):
+                    cols = [c for c in ("Region","Size") if c in df.columns]
+                    inds = [c for c in industries_in_input if c in df.columns]
+                    extras = ["GrandTotal"] if "GrandTotal" in df.columns else []
+                    return df[cols + inds + extras]
+            
+                p1 = reorder_panel(scenario1_result["pivot_panel"])
+                p2 = reorder_panel(scenario2_result["pivot_panel"])
+            
+                sheet_p = "PanelAllocated"
+                p1.to_excel(writer, sheet_name=sheet_p, startrow=0, index=False)
+                start_p = p1.shape[0] + 2
+                p2.to_excel(writer, sheet_name=sheet_p, startrow=start_p, index=False)
             
             excel_out.seek(0)
             st.download_button(
