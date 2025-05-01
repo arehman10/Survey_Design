@@ -865,6 +865,7 @@ def main():
                         ).reset_index()
 
                         df_combined = create_combined_table_with_totals(df_alloc)
+                        df_combined = df_combined.reset_index()
 
                         # reorder columns for df_combined
                         id_cols = [c for c in ["Region","Size"] if c in df_combined.columns]
@@ -1141,6 +1142,10 @@ def main():
             if scenario1_result.get("success") and scenario2_result.get("success"):
                 dfc1 = scenario1_result["df_combined"].copy().reset_index(drop=True)
                 dfc2 = scenario2_result["df_combined"].copy().reset_index(drop=True)
+
+                dfc1 = scenario1_result["df_combined"].copy().reset_index()
+                dfc2 = scenario2_result["df_combined"].copy().reset_index()
+
                 common_cols = [c for c in dfc1.columns if c in dfc2.columns]
                 dfc1 = dfc1[common_cols]
                 dfc2 = dfc2[common_cols]
