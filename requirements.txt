@@ -10,3 +10,6 @@ gurobipy
 pyomo
 ecos
 weasyprint
+uuid
+json
+os
