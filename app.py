@@ -1152,33 +1152,52 @@ def main():
             # For Excel, we combine scenario1 & scenario2 sheets in *one* workbook
             excel_out = io.BytesIO()
             with pd.ExcelWriter(excel_out, engine="openpyxl") as writer:
-                # scenario1
+                # ── A) Write one "Adjusted_Universe" sheet ──────────────────────────────
+                df_adjusted.to_excel(writer, sheet_name="Adjusted_Universe", index=False)
+            
+                # ── B) Write scenario 1's parameters & cell-mins if scenario1 succeeded ─
                 if scenario1_result.get("success"):
-                    write_scenario_sheets_to_writer(
-                        writer=writer,
-                        df_combined=scenario1_result["df_combined"],
-                        pivot_population=scenario1_result["pivot_pop"].set_index(["Region","Size"]).drop(columns="GrandTotal", errors="ignore"),
-                        scenario_label="S1_"
+                    # e.g. scenario1_params_df → "S1_Parameters",
+                    #      scenario1_dimmins_df → "S1_CellMinimums"
+                    # Or combine them if you prefer one sheet. Example here is one sheet:
+                    scenario1_params_df.to_excel(writer, sheet_name="S1_ParametersAndMins", index=False)
+            
+                    # ─ Optional: If you have a separate dimension-mins DF, you can append
+                    startrow = scenario1_params_df.shape[0] + 2  # skip 2 lines
+                    scenario1_dimmins_df.to_excel(writer, sheet_name="S1_ParametersAndMins",
+                                                  index=False, startrow=startrow)
+            
+                    # Now write scenario1 allocated sample & base-weight data
+                    # e.g. scenario1_result["pivot_panel"] as "S1_Allocated Sample"
+                    scenario1_result["pivot_panel"].to_excel(writer, sheet_name="S1_Allocated Sample", index=False)
+            
+                    # scenario1_result["df_combined"] as "S1_Sample_with_baseweight"
+                    scenario1_result["df_combined"].to_excel(
+                        writer, sheet_name="S1_Sample_with_baseweight", index=False
                     )
-
-                # scenario2
+            
+                # ── C) Write scenario 2's parameters & cell-mins if scenario2 succeeded ─
                 if scenario2_result.get("success"):
-                    write_scenario_sheets_to_writer(
-                        writer=writer,
-                        df_combined=scenario2_result["df_combined"],
-                        scenario_label="S2_"
+                    scenario2_params_df.to_excel(writer, sheet_name="S2_ParametersAndMins", index=False)
+            
+                    startrow = scenario2_params_df.shape[0] + 2
+                    scenario2_dimmins_df.to_excel(writer, sheet_name="S2_ParametersAndMins",
+                                                  index=False, startrow=startrow)
+            
+                    scenario2_result["pivot_panel"].to_excel(writer, sheet_name="S2_Allocated Sample", index=False)
+                    scenario2_result["df_combined"].to_excel(
+                        writer, sheet_name="S2_Sample_with_baseweight", index=False
                     )
-
-                # difference sheet if both success
+            
+                # ── D) Write the difference sheet if both scenarios succeeded ─
                 if scenario1_result.get("success") and scenario2_result.get("success"):
                     diff_sheet = writer.book.create_sheet("ScenarioDiff")
-                    # We'll store df_diff as is
                     df_diff = df_diff.reset_index(drop=True)
                     col_headers = list(df_diff.columns)
                     diff_sheet.append(col_headers)
                     for rowvals in df_diff.values:
                         diff_sheet.append(list(rowvals))
-
+            
             excel_out.seek(0)
             st.download_button(
                 label="Download Combined Excel (Both Scenarios)",
