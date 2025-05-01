@@ -1433,6 +1433,7 @@ def main():
                 p2.to_excel(writer, sheet_name=sheet_p, startrow=start_p, index=False)
 
 
+                
                 # 5) Region-wise & Size-wise Sample Totals side-by-side
                 r1 = scenario1_result["region_totals"].rename(columns={
                     "PanelAllocated":"S1_Panel",
