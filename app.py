@@ -24,7 +24,7 @@ import os
 ###############################################################################
 # SESSION PERSISTENCE HELPERS
 ###############################################################################
-SESSIONS_DIR = "sessions"  # local folder to store your session JSON files
+SESSIONS_DIR = "sessions"  # local folder to store session JSON files
 
 def init_sessions_dir():
     """Ensure we have a 'sessions' subfolder to store JSON files."""
@@ -45,7 +45,6 @@ def load_session_from_file(session_id):
         return None
     with open(file_path, "r", encoding="utf-8") as f:
         return json.load(f)
-
 
 def add_grand_total_row(df, key_col_name):
     """Return df with an extra row that holds the column totals."""
@@ -581,62 +580,60 @@ def allocate_panel_fresh(df_long_sol, df_panel_wide, df_fresh_wide):
 ###############################################################################
 def main():
     st.title("Survey Design")
-    #####################
-    # SESSION PERSISTENCE
-    #####################
-    with st.sidebar.expander("Session Persistence", expanded=False):
-        st.write("Save or load this session so others can review or you can resume later.")
 
-        # 1) Save Session
+    # --- Session Persistence in the Sidebar ---
+    with st.sidebar.expander("Session Persistence", expanded=False):
+        st.write("Save or load this session so others can review or resume later.")
+
+        # Save Session
         if st.button("Save Session", key="btn_save_session"):
             session_id = str(uuid.uuid4())[:8]  # short random ID
             # Gather scenario parameters from st.session_state
             session_data = {
-                "total_sample_1"     : st.session_state.get("total_sample_1", 1000),
-                "min_cell_size_1"    : st.session_state.get("min_cell_size_1", 4),
-                "max_cell_size_1"    : st.session_state.get("max_cell_size_1", 40),
-                "max_base_weight_1"  : st.session_state.get("max_base_weight_1", 600),
-                "solver_choice_1"    : st.session_state.get("solver_choice_1", "SCIP"),
-                "conversion_rate_1"  : st.session_state.get("conversion_rate_1", 0.3),
-                "z_score_1"          : st.session_state.get("z_score_1", 1.644853627),
-                "margin_of_error_1"  : st.session_state.get("margin_of_error_1", 0.075),
-                "p_1"                : st.session_state.get("p_1", 0.5),
+                "total_sample_1" : st.session_state.get("total_sample_1", 1000),
+                "min_cell_size_1": st.session_state.get("min_cell_size_1", 4),
+                "max_cell_size_1": st.session_state.get("max_cell_size_1", 40),
+                "max_base_weight_1": st.session_state.get("max_base_weight_1", 600),
+                "solver_choice_1": st.session_state.get("solver_choice_1", "SCIP"),
+                "conversion_rate_1": st.session_state.get("conversion_rate_1", 0.3),
+                "z_score_1": st.session_state.get("z_score_1", 1.644853627),
+                "margin_of_error_1": st.session_state.get("margin_of_error_1", 0.075),
+                "p_1": st.session_state.get("p_1", 0.5),
 
-                "total_sample_2"     : st.session_state.get("total_sample_2", 800),
-                "min_cell_size_2"    : st.session_state.get("min_cell_size_2", 4),
-                "max_cell_size_2"    : st.session_state.get("max_cell_size_2", 40),
-                "max_base_weight_2"  : st.session_state.get("max_base_weight_2", 600),
-                "solver_choice_2"    : st.session_state.get("solver_choice_2", "ECOS_BB"),
-                "conversion_rate_2"  : st.session_state.get("conversion_rate_2", 0.3),
-                "z_score_2"          : st.session_state.get("z_score_2", 1.644853627),
-                "margin_of_error_2"  : st.session_state.get("margin_of_error_2", 0.075),
-                "p_2"                : st.session_state.get("p_2", 0.5),
+                "total_sample_2": st.session_state.get("total_sample_2", 800),
+                "min_cell_size_2": st.session_state.get("min_cell_size_2", 4),
+                "max_cell_size_2": st.session_state.get("max_cell_size_2", 40),
+                "max_base_weight_2": st.session_state.get("max_base_weight_2", 600),
+                "solver_choice_2": st.session_state.get("solver_choice_2", "ECOS_BB"),
+                "conversion_rate_2": st.session_state.get("conversion_rate_2", 0.3),
+                "z_score_2": st.session_state.get("z_score_2", 1.644853627),
+                "margin_of_error_2": st.session_state.get("margin_of_error_2", 0.075),
+                "p_2": st.session_state.get("p_2", 0.5),
 
-                "use_sum_universe"   : st.session_state.get("use_sum_universe", False),
+                "use_sum_universe": st.session_state.get("use_sum_universe", False),
             }
+            # Save
             save_session_to_file(session_id, session_data)
-            st.success(f"Session saved! Your Session ID = {session_id}")
-            st.markdown(
-                f"Share or store this ID. Or share this link: "
-                f"[Open Session]({st.request.url}?session_id={session_id})"
-            )
+            st.success(f"Session saved! Session ID = {session_id}")
+            # We can't use st.request.url because Streamlit doesn't have that attribute.
+            # Provide a placeholder link for the user:
+            st.markdown(f"*Share or store this ID. You can pass it like:* `https://your-app-url/?session_id={session_id}`")
 
-        # 2) Load Session
-        session_id_to_load = st.text_input("Session ID:", value="", key="txt_load_session")
+        # Load Session
+        load_id = st.text_input("Session ID to load", "")
         if st.button("Load Session", key="btn_load_session"):
-            if not session_id_to_load.strip():
+            if not load_id.strip():
                 st.warning("Please enter a session ID first.")
             else:
-                loaded_data = load_session_from_file(session_id_to_load.strip())
+                loaded_data = load_session_from_file(load_id.strip())
                 if loaded_data is None:
-                    st.error("No saved session found for that ID.")
+                    st.error(f"No saved session found for ID={load_id}")
                 else:
-                    st.success("Session loaded! Restoring values...")
-                    # push them into st.session_state
+                    st.success("Session loaded! Restoring parameters to session_state...")
                     for k,v in loaded_data.items():
                         st.session_state[k] = v
-                    # re-run so the changed session state is applied
                     st.experimental_rerun()
+
     st.write("""
     **Features**:
     1. Two sheets: 'panel' and 'fresh'.
