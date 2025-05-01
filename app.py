@@ -1192,7 +1192,7 @@ def main():
             ###############################################################################
             
             # 1) List of industry columns in the original input order
-           industries_in_input = [
+            industries_in_input = [
                 c for c in df_panel_wide.columns
                 if c not in ("Region","Size")
             ]
