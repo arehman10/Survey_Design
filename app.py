@@ -21,9 +21,7 @@ import os
 # 1) HELPER FUNCTIONS
 ###############################################################################
 
-###############################################################################
-# SESSION PERSISTENCE HELPERS
-###############################################################################
+
 SESSIONS_DIR = "sessions"  # local folder to store session JSON files
 
 def init_sessions_dir():
@@ -588,7 +586,6 @@ def main():
         # Save Session
         if st.button("Save Session", key="btn_save_session"):
             session_id = str(uuid.uuid4())[:8]  # short random ID
-            # Gather scenario parameters from st.session_state
             session_data = {
                 "total_sample_1" : st.session_state.get("total_sample_1", 1000),
                 "min_cell_size_1": st.session_state.get("min_cell_size_1", 4),
@@ -600,7 +597,7 @@ def main():
                 "margin_of_error_1": st.session_state.get("margin_of_error_1", 0.075),
                 "p_1": st.session_state.get("p_1", 0.5),
 
-                "total_sample_2": st.session_state.get("total_sample_2", 800),
+                "total_sample_2" : st.session_state.get("total_sample_2", 800),
                 "min_cell_size_2": st.session_state.get("min_cell_size_2", 4),
                 "max_cell_size_2": st.session_state.get("max_cell_size_2", 40),
                 "max_base_weight_2": st.session_state.get("max_base_weight_2", 600),
@@ -612,11 +609,9 @@ def main():
 
                 "use_sum_universe": st.session_state.get("use_sum_universe", False),
             }
-            # Save
             save_session_to_file(session_id, session_data)
             st.success(f"Session saved! Session ID = {session_id}")
-            # We can't use st.request.url because Streamlit doesn't have that attribute.
-            # Provide a placeholder link for the user:
+            # We can't use st.request.url, so here's a placeholder link
             st.markdown(f"*Share or store this ID. You can pass it like:* `https://your-app-url/?session_id={session_id}`")
 
         # Load Session
@@ -630,9 +625,13 @@ def main():
                     st.error(f"No saved session found for ID={load_id}")
                 else:
                     st.success("Session loaded! Restoring parameters to session_state...")
+                    # Put them into st.session_state
                     for k,v in loaded_data.items():
                         st.session_state[k] = v
-                    st.experimental_rerun()
+                    # Because st.experimental_rerun is unavailable, we can't auto-refresh.
+                    # So we just instruct user to refresh manually:
+                    st.info("Session parameters have been restored. Please manually refresh the page to see changes.")
+
 
     st.write("""
     **Features**:
