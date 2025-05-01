@@ -1445,7 +1445,7 @@ def main():
                     "FreshAllocated":"S2_Fresh",
                     "SampleTotal":"S2_Total"
                 })
-               region_totals_combined = (
+                region_totals_combined = (
                     pd.merge(r1, r2, on="Region", how="outer")
                       .loc[:, ["Region",
                                "S1_Panel","S2_Panel",
