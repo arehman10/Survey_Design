@@ -1431,6 +1431,42 @@ def main():
                 p1.to_excel(writer, sheet_name=sheet_p, startrow=0, index=False)
                 start_p = p1.shape[0] + 2
                 p2.to_excel(writer, sheet_name=sheet_p, startrow=start_p, index=False)
+
+
+                # 5) Region-wise & Size-wise Sample Totals side-by-side
+                r1 = scenario1_result["region_totals"].rename(columns={
+                    "PanelAllocated":"S1_Panel",
+                    "FreshAllocated":"S1_Fresh",
+                    "SampleTotal":"S1_Total"
+                })
+                r2 = scenario2_result["region_totals"].rename(columns={
+                    "PanelAllocated":"S2_Panel",
+                    "FreshAllocated":"S2_Fresh",
+                    "SampleTotal":"S2_Total"
+                })
+                region_totals_combined = pd.merge(r1, r2, on="Region", how="outer")
+            
+                sz1 = scenario1_result["size_totals"].rename(columns={
+                    "PanelAllocated":"S1_Panel",
+                    "FreshAllocated":"S1_Fresh",
+                    "SampleTotal":"S1_Total"
+                })
+                sz2 = scenario2_result["size_totals"].rename(columns={
+                    "PanelAllocated":"S2_Panel",
+                    "FreshAllocated":"S2_Fresh",
+                    "SampleTotal":"S2_Total"
+                })
+                size_totals_combined = pd.merge(sz1, sz2, on="Size", how="outer")
+            
+                sheet_tot = "TotalsByRegionAndSize"
+                region_totals_combined.to_excel(writer, sheet_name=sheet_tot, index=False, startrow=0)
+                start_tot = region_totals_combined.shape[0] + 2
+                size_totals_combined.to_excel(
+                    writer,
+                    sheet_name=sheet_tot,
+                    index=False,
+                    startrow=start_tot
+                )
             
             excel_out.seek(0)
             st.download_button(
