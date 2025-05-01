@@ -1152,70 +1152,77 @@ def main():
             # For Excel, we combine scenario1 & scenario2 sheets in *one* workbook
             excel_out = io.BytesIO()
             with pd.ExcelWriter(excel_out, engine="openpyxl") as writer:
-                # (A) Single "Adjusted_Universe" sheet
+                # (1) Single "Adjusted_Universe" sheet
                 df_adjusted.to_excel(writer, sheet_name="Adjusted_Universe", index=False)
             
-                # ──────────────────────────────────────────────────────────
-                # (B) Scenario 1: parameters, dimension-mins, allocated sample
-                #     Only if scenario1 succeeded
-                # ──────────────────────────────────────────────────────────
+                # ------------------------------------------------------------
+                # (2) Scenario 1 results – if scenario1 succeeded
+                # ------------------------------------------------------------
                 if scenario1_result.get("success"):
-                    # 1) Write scenario 1’s parameters & dimension-mins on the same sheet
+                    # Sheet for scenario1's parameters and dimension mins
                     sheet_params_1 = "S1_ParametersAndMins"
-                    
-                    # Write the parameters DataFrame (params_df) at the top
+            
+                    # 1a) Write scenario1 parameters at top
                     params_df.to_excel(writer, sheet_name=sheet_params_1, index=False, startrow=0)
-                    
-                    # Then, below that, the dimension-min DataFrames. Example below:
+            
+                    # 1b) Then dimension mins below. For demonstration, stack them:
                     start_row = params_df.shape[0] + 2
-                    region_min_df.to_excel(writer, sheet_name=sheet_params_1, index=False, startrow=start_row)
-                    
+                    region_min_df.to_excel(writer,
+                                           sheet_name=sheet_params_1,
+                                           index=False,
+                                           startrow=start_row)
                     start_row += region_min_df.shape[0] + 2
-                    size_min_df.to_excel(writer, sheet_name=sheet_params_1, index=False, startrow=start_row)
-                    
+                    size_min_df.to_excel(writer,
+                                         sheet_name=sheet_params_1,
+                                         index=False,
+                                         startrow=start_row)
                     start_row += size_min_df.shape[0] + 2
-                    industry_min_df.to_excel(writer, sheet_name=sheet_params_1, index=False, startrow=start_row)
-                    
-                    # 2) Write scenario 1’s allocated sample & base-weight
-                    #    Example: scenario1_result["df_combined"] → "S1_Sample_with_baseweight"
+                    industry_min_df.to_excel(writer,
+                                             sheet_name=sheet_params_1,
+                                             index=False,
+                                             startrow=start_row)
+            
+                    # 2) scenario1's allocated sample & baseweight
                     scenario1_result["df_combined"].to_excel(
                         writer, sheet_name="S1_Sample_with_baseweight", index=False
                     )
             
-                # ──────────────────────────────────────────────────────────
-                # (C) Scenario 2: parameters, dimension-mins, allocated sample
-                #     Only if scenario2 succeeded
-                # ──────────────────────────────────────────────────────────
+                # ------------------------------------------------------------
+                # (3) Scenario 2 results – if scenario2 succeeded
+                # ------------------------------------------------------------
                 if scenario2_result.get("success"):
                     sheet_params_2 = "S2_ParametersAndMins"
-                    
-                    # 1) Write scenario 2’s parameters & dimension-mins on the same sheet
+            
                     params_df2.to_excel(writer, sheet_name=sheet_params_2, index=False, startrow=0)
-                    
+            
                     start_row_2 = params_df2.shape[0] + 2
-                    region_min_df2.to_excel(writer, sheet_name=sheet_params_2, index=False, startrow=start_row_2)
-                    
+                    region_min_df2.to_excel(writer,
+                                            sheet_name=sheet_params_2,
+                                            index=False,
+                                            startrow=start_row_2)
                     start_row_2 += region_min_df2.shape[0] + 2
-                    size_min_df2.to_excel(writer, sheet_name=sheet_params_2, index=False, startrow=start_row_2)
-                    
+                    size_min_df2.to_excel(writer,
+                                          sheet_name=sheet_params_2,
+                                          index=False,
+                                          startrow=start_row_2)
                     start_row_2 += size_min_df2.shape[0] + 2
-                    industry_min_df2.to_excel(writer, sheet_name=sheet_params_2, index=False, startrow=start_row_2)
-                    
-                    # 2) scenario2 allocated sample & base-weight
+                    industry_min_df2.to_excel(writer,
+                                              sheet_name=sheet_params_2,
+                                              index=False,
+                                              startrow=start_row_2)
+            
                     scenario2_result["df_combined"].to_excel(
                         writer, sheet_name="S2_Sample_with_baseweight", index=False
                     )
             
-                # ──────────────────────────────────────────────────────────
-                # (D) If both succeeded, write the difference sheet
-                # ──────────────────────────────────────────────────────────
+                # ------------------------------------------------------------
+                # (4) If both succeed, write the difference sheet
+                # ------------------------------------------------------------
                 if scenario1_result.get("success") and scenario2_result.get("success"):
                     diff_sheet = writer.book.create_sheet("ScenarioDiff")
                     df_diff = df_diff.reset_index(drop=True)
-                    # column headers
                     col_headers = list(df_diff.columns)
                     diff_sheet.append(col_headers)
-                    # rest of rows
                     for rowvals in df_diff.values:
                         diff_sheet.append(list(rowvals))
             
