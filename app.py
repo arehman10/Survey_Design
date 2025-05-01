@@ -1457,6 +1457,40 @@ def main():
                 region_totals_combined.to_excel(writer, sheet_name=sheet_tot, index=False, startrow=0)
                 start_tot = region_totals_combined.shape[0] + 2
                 size_totals_combined.to_excel(writer, sheet_name=sheet_tot, index=False, startrow=start_tot)
+
+                  # 6) Comparison: Scenario 1 minus Scenario 2 with BaseWeight gradient
+                # -------------------------------------------------------------------
+                # build diff
+                df1 = scenario1_result["df_combined"].reset_index()
+                df2 = scenario2_result["df_combined"].reset_index()
+                common = [c for c in df1.columns if c in df2.columns]
+                df_diff = df1[common].copy()
+                num_cols = [c for c in common if pd.api.types.is_numeric_dtype(df1[c])]
+                for c in num_cols:
+                    df_diff[c] = df1[c] - df2[c]
+            
+                # reorder diff sheet
+                def reorder_diff(df):
+                    df_out = df.copy()
+                    cols = [c for c in ("Region","Size") if c in df_out.columns]
+                    sample_cols = []
+                    bw_cols     = []
+                    for ind in industries_in_input:
+                        s, b = f"{ind}_Sample", f"{ind}_BaseWeight"
+                        if s in df_out.columns: sample_cols.append(s)
+                        if b in df_out.columns: bw_cols.append(b)
+                    extras = [c for c in ("GrandTotal_Sample","GrandTotal_BaseWeight") if c in df_out.columns]
+                    return df_out[cols + sample_cols + bw_cols + extras]
+            
+                df_diff_out = reorder_diff(df_diff)
+            
+                sheet_cmp = "Comparison"
+                df_diff_out.to_excel(writer, sheet_name=sheet_cmp, index=False)
+                ws_cmp = writer.sheets[sheet_cmp]
+            
+                # apply gradient to the BaseWeight diff columns (exclude GrandTotal_BaseWeight)
+                apply_color_scale(df_diff_out, row_offset=0)
+
             
             # rewind & download
             excel_out.seek(0)
