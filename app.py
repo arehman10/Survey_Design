@@ -982,6 +982,24 @@ def main():
                 conv_rate=conversion_rate_1,
                 dimension_mins=dimension_mins_1
             )
+            params_df = pd.DataFrame([
+            ("Total Sample",        total_sample_1),
+            ("Min Cell Size",       min_cell_size_1),
+            ("Max Cell Size",       max_cell_size_1),
+            ("Max Base Weight",     max_base_weight_1),
+            ("Solver Choice",       solver_choice_1),
+            ("Conversion Rate",     conversion_rate_1),
+            ("Z-Score",             z_score_1),
+            ("Margin of Error",     margin_of_error_1),
+            ("p",                   p_1),
+            ], columns=["Parameter","Value"])
+            # Then we can build dataframes for each dimension:
+            region_min_df = pd.DataFrame(list(dimension_mins_1["Region"].items()),
+                                         columns=["Region", "MinNeeded"])
+            size_min_df = pd.DataFrame(list(dimension_mins_1["Size"].items()),
+                                       columns=["Size", "MinNeeded"])
+            industry_min_df = pd.DataFrame(list(dimension_mins_1["Industry"].items()),
+                                           columns=["Industry", "MinNeeded"])
 
             # run scenario 2
             scenario2_result = run_scenario(
@@ -994,6 +1012,25 @@ def main():
                 conv_rate=conversion_rate_2,
                 dimension_mins=dimension_mins_2
             )
+
+            params_df2 = pd.DataFrame([
+                ("Total Sample",        total_sample_2),
+                ("Min Cell Size",       min_cell_size_2),
+                ("Max Cell Size",       max_cell_size_2),
+                ("Max Base Weight",     max_base_weight_2),
+                ("Solver Choice",       solver_choice_2),
+                ("Conversion Rate",     conversion_rate_2),
+                ("Z-Score",             z_score_2),
+                ("Margin of Error",     margin_of_error_2),
+                ("p",                   p_2),
+            ], columns=["Parameter","Value"])
+            
+            region_min_df2 = pd.DataFrame(list(dimension_mins_2["Region"].items()),
+                                          columns=["Region", "MinNeeded"])
+            size_min_df2 = pd.DataFrame(list(dimension_mins_2["Size"].items()),
+                                        columns=["Size", "MinNeeded"])
+            industry_min_df2 = pd.DataFrame(list(dimension_mins_2["Industry"].items()),
+                                            columns=["Industry", "MinNeeded"])
 
             # show scenario 1
             st.header("Scenario 1 Results")
