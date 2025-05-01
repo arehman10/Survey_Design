@@ -1030,11 +1030,12 @@ def main():
                 # success
                 solver1_info = scenario1_result["solver_info"]
                 st.success(f"Solved with solver: {solver1_info}")
-                st.subheader("Panel (Scenario 1)")
-                st.data_editor(scenario1_result["pivot_panel"], use_container_width=True, key="s1_panel")
+
                 st.subheader("Fresh (Scenario 1)")
                 st.data_editor(scenario1_result["pivot_fresh"], use_container_width=True, key="s1_fresh")
-
+                st.subheader("Panel (Scenario 1)")
+                st.data_editor(scenario1_result["pivot_panel"], use_container_width=True, key="s1_panel")
+                
                 st.subheader("Allocated Sample & Base Weights (Scenario 1)")
                 st.dataframe(scenario1_result["df_combined_style"], key="s1_combined")
 
@@ -1044,8 +1045,6 @@ def main():
                 st.subheader("Size-wise Sample Totals (Scenario 1)")
                 st.data_editor(scenario1_result["size_totals"], use_container_width=True, key="s1_size_totals")
 
-                st.subheader("Proportional Sample (Scenario 1)")
-                st.dataframe(scenario1_result["pivot_propsample"], key="s1_prop")
 
             # show scenario 2
             st.header("Scenario 2 Results")
@@ -1082,11 +1081,13 @@ def main():
                 # success
                 solver2_info = scenario2_result["solver_info"]
                 st.success(f"Solved with solver: {solver2_info}")
-                st.subheader("Panel (Scenario 2)")
-                st.data_editor(scenario2_result["pivot_panel"], use_container_width=True, key="s2_panel")
+               
                 st.subheader("Fresh (Scenario 2)")
                 st.data_editor(scenario2_result["pivot_fresh"], use_container_width=True, key="s2_fresh")
+                st.subheader("Panel (Scenario 2)")
+                st.data_editor(scenario2_result["pivot_panel"], use_container_width=True, key="s2_panel")
 
+                
                 st.subheader("Allocated Sample & Base Weights (Scenario 2)")
                 st.dataframe(scenario2_result["df_combined_style"], key="s2_combined")
 
@@ -1096,8 +1097,7 @@ def main():
                 st.subheader("Size-wise Sample Totals (Scenario 2)")
                 st.data_editor(scenario2_result["size_totals"], use_container_width=True, key="s2_size_totals")
 
-                st.subheader("Proportional Sample (Scenario 2)")
-                st.dataframe(scenario2_result["pivot_propsample"], key="s2_prop")
+            
 
             # -------------- COMPARISON --------------
             st.header("Comparison: Scenario 1 minus Scenario 2")
