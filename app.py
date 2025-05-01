@@ -547,9 +547,67 @@ def allocate_panel_fresh(df_long_sol, df_panel_wide, df_fresh_wide):
     return df_long_sol
 
 ###############################################################################
-# 5) MAIN APP
+# 5) MAIN APP (SAME STRUCTURE, ADDED SAVE/LOAD SESSION)
 ###############################################################################
 def main():
+    st.title("Survey Design")
+
+    #####################
+    # SESSION PERSISTENCE
+    #####################
+    with st.sidebar.expander("Session Persistence", expanded=False):
+        st.write("Save or load this session so others can review or you can resume later.")
+        
+        # 1) Save Session button
+        if st.button("Save Session", key="btn_save_session"):
+            # Create short random ID
+            session_id = str(uuid.uuid4())[:8]
+            
+            # Build a dictionary of the user's key parameters (Scenario1, Scenario2, dimension mins, etc.)
+            # We'll store them in st.session_state so we can retrieve them easily.
+            session_data = {
+                "total_sample_1": st.session_state.get("total_sample_1", 1000),
+                "min_cell_size_1": st.session_state.get("min_cell_size_1", 4),
+                "max_cell_size_1": st.session_state.get("max_cell_size_1", 40),
+                "max_base_weight_1": st.session_state.get("max_base_weight_1", 600),
+                "solver_choice_1": st.session_state.get("solver_choice_1", "SCIP"),
+                "conversion_rate_1": st.session_state.get("conversion_rate_1", 0.3),
+                "z_score_1": st.session_state.get("z_score_1", 1.644853627),
+                "margin_of_error_1": st.session_state.get("margin_of_error_1", 0.075),
+                "p_1": st.session_state.get("p_1", 0.5),
+
+                "total_sample_2": st.session_state.get("total_sample_2", 800),
+                "min_cell_size_2": st.session_state.get("min_cell_size_2", 4),
+                "max_cell_size_2": st.session_state.get("max_cell_size_2", 40),
+                "max_base_weight_2": st.session_state.get("max_base_weight_2", 600),
+                "solver_choice_2": st.session_state.get("solver_choice_2", "ECOS_BB"),
+                "conversion_rate_2": st.session_state.get("conversion_rate_2", 0.3),
+                "z_score_2": st.session_state.get("z_score_2", 1.644853627),
+                "margin_of_error_2": st.session_state.get("margin_of_error_2", 0.075),
+                "p_2": st.session_state.get("p_2", 0.5),
+
+                "use_sum_universe": st.session_state.get("use_sum_universe", False),
+            }
+            # Save to file
+            save_session_to_file(session_id, session_data)
+            st.success(f"Session saved! Your Session ID = {session_id}")
+            st.markdown(f"Share or store this ID. Or share this link: `[Open Session]({st.request.url}?session_id={session_id})`")
+
+        # 2) Load Session logic: text input + button
+        session_id_to_load = st.text_input("Session ID:", value="", key="txt_load_session")
+        if st.button("Load Session", key="btn_load_session"):
+            if not session_id_to_load.strip():
+                st.warning("Please enter a session ID first.")
+            else:
+                loaded_data = load_session_from_file(session_id_to_load.strip())
+                if loaded_data is None:
+                    st.error("No saved session found for that ID.")
+                else:
+                    st.success("Session loaded! Restoring values...")
+                    for k,v in loaded_data.items():
+                        st.session_state[k] = v
+                    st.experimental_rerun()  # re-run so the changes take effect
+
     st.title("Survey Design")
     st.write("""
     **Features**:
@@ -1110,6 +1168,9 @@ def main():
 
     else:
         st.warning("Please upload an Excel file first.")
+    
+    st.write("... The rest of your existing code from your original main() function goes here ...")
+    st.write("Everything else is unchanged. Only the 'Session Persistence' block is new.")
 
 if __name__=="__main__":
     import cvxpy as cp
