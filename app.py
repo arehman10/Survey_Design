@@ -612,7 +612,7 @@ def main():
             save_session_to_file(session_id, session_data)
             st.success(f"Session saved! Session ID = {session_id}")
             # We can't use st.request.url, so here's a placeholder link
-            st.markdown(f"*Share or store this ID. You can pass it like:* `https://your-app-url/?session_id={session_id}`")
+            st.markdown(f"Open with: https://surveydesigntest.streamlit.app/?session_id={session_id}")
 
         # Load Session
         load_id = st.text_input("Session ID to load", "")
@@ -1158,7 +1158,7 @@ def main():
                         writer=writer,
                         df_combined=scenario1_result["df_combined"],
                         pivot_population=scenario1_result["pivot_pop"].set_index(["Region","Size"]).drop(columns="GrandTotal", errors="ignore"),
-                        pivot_propsample=scenario1_result["pivot_propsample"].set_index(["Region","Size"]),
+                    #    pivot_propsample=scenario1_result["pivot_propsample"].set_index(["Region","Size"]),
                         scenario_label="S1_"
                     )
 
@@ -1168,7 +1168,7 @@ def main():
                         writer=writer,
                         df_combined=scenario2_result["df_combined"],
                         pivot_population=scenario2_result["pivot_pop"].set_index(["Region","Size"]).drop(columns="GrandTotal", errors="ignore"),
-                        pivot_propsample=scenario2_result["pivot_propsample"].set_index(["Region","Size"]),
+                    #    pivot_propsample=scenario2_result["pivot_propsample"].set_index(["Region","Size"]),
                         scenario_label="S2_"
                     )
 
