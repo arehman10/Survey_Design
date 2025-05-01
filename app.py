@@ -1325,7 +1325,46 @@ def main():
             with pd.ExcelWriter(excel_out, engine="openpyxl") as writer:
                  # 1) Single "Adjusted_Universe" sheet
                 df_adjusted.to_excel(writer, sheet_name="Adjusted_Universe", index=False)
-            
+                # 2) COMBINED PARAMETERS SHEET
+                # ----------------------------------------------------------------
+                # tag each params_df so you know which scenario it came from
+                params_df["Scenario"] = "Scenario 1"
+                params_df2["Scenario"] = "Scenario 2"]
+                combined_params = pd.concat([params_df, params_df2], ignore_index=True)
+
+                # write once
+                combined_params.to_excel(
+                    writer,
+                    sheet_name="ParametersAndMins",
+                    index=False
+                )
+                
+                # 3) COMBINED “Sample_with_baseweight” SHEET
+                # ----------------------------------------------------------------
+                # prepare the two dataframes with your existing reorder logic:
+                s1_out = reorder_scenario_df( scenario1_result["df_combined"] )
+                s2_out = reorder_scenario_df( scenario2_result["df_combined"] )
+                
+                # pick a single sheet name
+                sheet = "All_Samples_and_BaseWeights"
+                
+                # write S1 at the top
+                start_row = 0
+                s1_out.to_excel(writer, sheet_name=sheet, startrow=start_row, index=False)
+                
+                # leave one blank row, then write S2 immediately below
+                start_row = s1_out.shape[0] + 2
+                s2_out.to_excel(writer, sheet_name=sheet, startrow=start_row, index=False)
+                
+                # now grab the worksheet and apply your color‐scale rules to each block
+                ws = writer.sheets[sheet]
+                
+                # e.g. for S1’s BaseWeight columns (which you already know are at fixed Excel cols):
+                apply_color_scale(ws, first_data_row=2, last_data_row=s1_out.shape[0]+1, ...)
+                
+                # and then for S2’s (offsetting row numbers by start_row):
+                apply_color_scale(ws, first_data_row=start_row+2, last_data_row=start_row + s2_out.shape[0]+1, ...)
+                            
                 # 2) Scenario 1 => param/min sheet + allocated baseweight
                 if scenario1_result.get("success"):
                     # a) param/min
