@@ -1168,9 +1168,6 @@ def main():
 
     else:
         st.warning("Please upload an Excel file first.")
-    
-    st.write("... The rest of your existing code from your original main() function goes here ...")
-    st.write("Everything else is unchanged. Only the 'Session Persistence' block is new.")
 
 if __name__=="__main__":
     import cvxpy as cp
