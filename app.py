@@ -547,63 +547,111 @@ def allocate_panel_fresh(df_long_sol, df_panel_wide, df_fresh_wide):
     return df_long_sol
 
 ###############################################################################
+# 5) SESSION PERSISTENCE UTILITIES
+###############################################################################
+SESSIONS_DIR = "sessions"
+
+def init_sessions_dir():
+    """Ensure we have a 'sessions' subfolder to store JSON files."""
+    if not os.path.exists(SESSIONS_DIR):
+        os.makedirs(SESSIONS_DIR)
+
+def save_session_to_file(session_id, data_dict):
+    """Write data_dict to a JSON file in SESSIONS_DIR using session_id as filename."""
+    init_sessions_dir()
+    file_path = os.path.join(SESSIONS_DIR, f"{session_id}.json")
+    with open(file_path, "w", encoding="utf-8") as f:
+        json.dump(data_dict, f, ensure_ascii=False, indent=2)
+
+def load_session_from_file(session_id):
+    """Read the JSON from SESSIONS_DIR. Return dict or None if not found."""
+    file_path = os.path.join(SESSIONS_DIR, f"{session_id}.json")
+    if not os.path.exists(file_path):
+        return None
+    with open(file_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+###############################################################################
 # 5) MAIN APP
 ###############################################################################
 def main():
     st.title("Survey Design")
-    st.write("""
-    **Features**:
-    1. Two sheets: 'panel' and 'fresh'.
-    2. Checkbox: if unchecked => Adjusted Universe = max(panel,fresh), if checked => sum(panel+fresh).
-    3. Check single-constraint feasibility. If there's a direct conflict, show the Overall, Cell, and Dimension conflicts as tables.
-    4. If still we fail at the solver => run a slack-based diagnostic to see combined conflict.
-    5. Two scenarios with separate parameters, plus difference.
-    6. Dimension minimums auto-calculated from sample-size formula (override in sidebar).
-    7. HTML & Excel downloads with color-scale in base-weight columns.
-    """)
+    # We'll add a Save/Load session area in the sidebar:
+    with st.sidebar.expander("Session Persistence", expanded=False):
+        st.write("**Save** your session state to re-load later or share with teammates.")
+        if "saved_session_id" not in st.session_state:
+            st.session_state["saved_session_id"] = ""
 
-    all_solvers_list= ["SCIP","ECOS_BB"]
+        # Button to Save session
+        if st.button("Save Session", key="btn_save_session"):
+            # 1) generate random ID
+            new_session_id = str(uuid.uuid4())[:8]  # short code
+            # 2) gather all relevant data from st.session_state
+            #    We'll store scenario parameters, dimension mins, plus any scenario results we want.
+            #    We'll store them in a dictionary that we can restore later.
+            session_data = {
+                "scenario1_params": {
+                    "total_sample": st.session_state.get("total_sample_1", 1000),
+                    "min_cell_size": st.session_state.get("min_cell_size_1", 4),
+                    "max_cell_size": st.session_state.get("max_cell_size_1", 40),
+                    "max_base_weight": st.session_state.get("max_base_weight_1", 600),
+                    "solver_choice": st.session_state.get("solver_choice_1", "SCIP"),
+                    "conversion_rate": st.session_state.get("conversion_rate_1", 0.3),
+                    "z_score": st.session_state.get("z_score_1", 1.644853627),
+                    "margin_of_error": st.session_state.get("margin_of_error_1", 0.075),
+                    "p": st.session_state.get("p_1", 0.5)
+                },
+                "scenario2_params": {
+                    "total_sample": st.session_state.get("total_sample_2", 800),
+                    "min_cell_size": st.session_state.get("min_cell_size_2", 4),
+                    "max_cell_size": st.session_state.get("max_cell_size_2", 40),
+                    "max_base_weight": st.session_state.get("max_base_weight_2", 600),
+                    "solver_choice": st.session_state.get("solver_choice_2", "ECOS_BB"),
+                    "conversion_rate": st.session_state.get("conversion_rate_2", 0.3),
+                    "z_score": st.session_state.get("z_score_2", 1.644853627),
+                    "margin_of_error": st.session_state.get("margin_of_error_2", 0.075),
+                    "p": st.session_state.get("p_2", 0.5)
+                },
+                "use_sum_universe": st.session_state.get("use_sum_universe", False),
+                # For dimension mins, we'll just store them as found in memory:
+                # In your code, dimension_mins_1, dimension_mins_2 are built after reading the file
+                # so we might store them in st.session_state or just store an object. 
+                # For simplicity, we store them if we have them in session_state:
+                "dimension_mins_1": st.session_state.get("dimension_mins_1", {}),
+                "dimension_mins_2": st.session_state.get("dimension_mins_2", {}),
 
-    # --- SCENARIO 1 parameters ---
-    st.sidebar.header("Parameters for Scenario 1")
-    total_sample_1= st.sidebar.number_input("Total Sample", value=1000, key="total_sample_1")
-    min_cell_size_1= st.sidebar.number_input("Min Cell Size", value=4, key="min_cell_size_1")
-    max_cell_size_1= st.sidebar.number_input("Max Cell Size", value=40, key="max_cell_size_1")
-    max_base_weight_1= st.sidebar.number_input("Max Base Weight", value=600, key="max_base_weight_1")
-    solver_choice_1= st.sidebar.selectbox("Solver", all_solvers_list, index=0, key="solver_choice_1")
-    conversion_rate_1= st.sidebar.number_input("Conversion Rate", value=0.3, step=0.01, key="conversion_rate_1")
+                # We could store final scenario results, but typically you'll just re-run the solver. 
+                # If you want to store final pivot results, you'd do so here. 
+                # For now, we won't store them to keep it simpler.
+            }
+            # 3) write to file
+            save_session_to_file(new_session_id, session_data)
+            st.session_state["saved_session_id"] = new_session_id
+            st.success(f"Session saved! Your session ID: {new_session_id}")
+            st.markdown(f"**Share this link**: `[Click Here]({st.request.url}?session_id={new_session_id})`")
 
-    use_sum_universe = st.sidebar.checkbox("Use sum(panel,fresh) instead of max(panel,fresh)", value=False)
+        # Field to Load session
+        load_id = st.text_input("Enter Session ID to load", key="txt_load_session_id")
+        if st.button("Load Session", key="btn_load_session"):
+            if load_id.strip():
+                loaded_data = load_session_from_file(load_id.strip())
+                if loaded_data is None:
+                    st.error(f"No saved session found for ID={load_id}")
+                else:
+                    st.success("Session loaded. Updating values.")
+                    # Here we set st.session_state so the app picks them up.
+                    st.session_state["use_sum_universe"] = loaded_data["use_sum_universe"]
+                    for k,v in loaded_data["scenario1_params"].items():
+                        st.session_state[f"{k}_1"] = v
+                    for k,v in loaded_data["scenario2_params"].items():
+                        st.session_state[f"{k}_2"] = v
+                    # dimension mins
+                    st.session_state["dimension_mins_1"] = loaded_data["dimension_mins_1"]
+                    st.session_state["dimension_mins_2"] = loaded_data["dimension_mins_2"]
 
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("**Sample Size Formula Inputs (Scenario 1)**")
-    z_score_1= st.sidebar.number_input("Z-Score", value=1.644853627, format="%.9f", key="z_score_1")
-    margin_of_error_1= st.sidebar.number_input("Margin of Error", value=0.075, format="%.3f", key="margin_of_error_1")
-    p_1= st.sidebar.number_input("p (Population Proportion)", value=0.5, format="%.2f", key="p_1")
+                    st.experimental_rerun()  # re-run so that updated values show up
 
-    st.sidebar.markdown("---")
-
-    # --- SCENARIO 2 parameters ---
-    st.sidebar.header("Parameters for Scenario 2")
-    total_sample_2= st.sidebar.number_input("Total Sample", value=800, key="total_sample_2")
-    min_cell_size_2= st.sidebar.number_input("Min Cell Size", value=4, key="min_cell_size_2")
-    max_cell_size_2= st.sidebar.number_input("Max Cell Size", value=40, key="max_cell_size_2")
-    max_base_weight_2= st.sidebar.number_input("Max Base Weight", value=600, key="max_base_weight_2")
-    solver_choice_2= st.sidebar.selectbox("Solver ", all_solvers_list, index=1, key="solver_choice_2")
-    conversion_rate_2= st.sidebar.number_input("Conversion Rate ", value=0.3, step=0.01, key="conversion_rate_2")
-
-    st.sidebar.markdown("**Sample Size Formula Inputs (Scenario 2)**")
-    z_score_2= st.sidebar.number_input("Z-Score ", value=1.644853627, format="%.9f", key="z_score_2")
-    margin_of_error_2= st.sidebar.number_input("Margin of Error ", value=0.075, format="%.3f", key="margin_of_error_2")
-    p_2= st.sidebar.number_input("p (Population Proportion) ", value=0.5, format="%.2f", key="p_2")
-
-    st.sidebar.markdown("---")
-
-    uploaded_file= st.file_uploader("Upload Excel with 'panel','fresh'", type=["xlsx"])
-
-    # We'll store dimension_mins for scenario1 and scenario2:
-    dimension_mins_1= {"Region":{}, "Size":{}, "Industry":{}}
-    dimension_mins_2= {"Region":{}, "Size":{}, "Industry":{}}
 
     if uploaded_file is not None:
         # Derive base_filename for display
@@ -1107,6 +1155,10 @@ def main():
                 file_name=f"{base_filename}_comparison.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+    st.write("Below, your app continues as normal with the solver logic... (shortened for example)")
+
+    st.write("**Try saving your session** from the sidebar, then copy/paste the link. Or store the ID and load it again later.")
+
 
     else:
         st.warning("Please upload an Excel file first.")
