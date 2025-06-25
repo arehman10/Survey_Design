@@ -751,7 +751,7 @@ def main():
             for r in all_regions:
                 pop_ = sum_pop_in_dim_1(df_adjusted,"Region", r)
                 defMin= compute_fpc_min(pop_, n_infinity_1)
-                user_val= st.number_input(f"Min sample for Region={r} (S1)", 
+                user_val= st.number_input(f"**Region**={r} (S1)", 
                                           min_value=0, value=int(round(defMin)), step=1, key=f"S1_reg_{r}")
                 dimension_mins_1["Region"][r]= user_val
             for sz in all_sizes:
