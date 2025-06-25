@@ -763,7 +763,7 @@ def main():
             for ind_ in all_inds:
                 pop_= df_adjusted[ind_].fillna(0).sum()
                 defMin= compute_fpc_min(pop_, n_infinity_1)
-                user_val= st.number_input(f"**Industry**={ind_} (S1)",
+                user_val= st.number_input(f"**Sector**={ind_} (S1)",
                                           min_value=0, value=int(round(defMin)), step=1, key=f"S1_ind_{ind_}")
                 dimension_mins_1["Industry"][ind_]= user_val
 
