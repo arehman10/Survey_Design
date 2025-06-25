@@ -757,35 +757,35 @@ def main():
             for sz in all_sizes:
                 pop_ = sum_pop_in_dim_1(df_adjusted,"Size", sz)
                 defMin= compute_fpc_min(pop_, n_infinity_1)
-                user_val= st.number_input(f"Min sample for Size={sz} (S1)",
+                user_val= st.number_input(f"**Size**={sz} (S1)",
                                           min_value=0, value=int(round(defMin)), step=1, key=f"S1_size_{sz}")
                 dimension_mins_1["Size"][sz]= user_val
             for ind_ in all_inds:
                 pop_= df_adjusted[ind_].fillna(0).sum()
                 defMin= compute_fpc_min(pop_, n_infinity_1)
-                user_val= st.number_input(f"Min sample for Industry={ind_} (S1)",
+                user_val= st.number_input(f"**Sector**={ind_} (S1)",
                                           min_value=0, value=int(round(defMin)), step=1, key=f"S1_ind_{ind_}")
-                dimension_mins_1["Industry"][ind_]= user_val
+                dimension_mins_1["Sector"][ind_]= user_val
 
             st.write("### Scenario 2")
             for r in all_regions:
                 pop_ = sum_pop_in_dim_2(df_adjusted,"Region", r)
                 defMin= compute_fpc_min(pop_, n_infinity_2)
-                user_val= st.number_input(f"Min sample for Region={r} (S2)", 
+                user_val= st.number_input(f"**Region**={r} (S2)", 
                                           min_value=0, value=int(round(defMin)), step=1, key=f"S2_reg_{r}")
                 dimension_mins_2["Region"][r]= user_val
             for sz in all_sizes:
                 pop_ = sum_pop_in_dim_2(df_adjusted,"Size", sz)
                 defMin= compute_fpc_min(pop_, n_infinity_2)
-                user_val= st.number_input(f"Min sample for Size={sz} (S2)",
+                user_val= st.number_input(f"**Size**={sz} (S2)",
                                           min_value=0, value=int(round(defMin)), step=1, key=f"S2_size_{sz}")
                 dimension_mins_2["Size"][sz]= user_val
             for ind_ in all_inds:
                 pop_= df_adjusted[ind_].fillna(0).sum()
                 defMin= compute_fpc_min(pop_, n_infinity_2)
-                user_val= st.number_input(f"Min sample for Industry={ind_} (S2)",
+                user_val= st.number_input(f"**Sector**={ind_} (S2)",
                                           min_value=0, value=int(round(defMin)), step=1, key=f"S2_ind_{ind_}")
-                dimension_mins_2["Industry"][ind_]= user_val
+                dimension_mins_2["Sector"][ind_]= user_val
 
         # ---------- RUN BOTH SCENARIOS -----------
         if st.button("Run Optimization for Both Scenarios"):
