@@ -746,7 +746,7 @@ def main():
                 tot+= subset[cc].fillna(0).sum()
             return tot
 
-        with st.sidebar.expander("## Dimension Minimum", expanded=True):
+        with st.sidebar.expander("Dimension Minimum", expanded=True):
             st.write("### Scenario 1")
             for r in all_regions:
                 pop_ = sum_pop_in_dim_1(df_adjusted,"Region", r)
