@@ -613,17 +613,68 @@ def run_optimization(df_wide,
     if x_val is None:
         raise ValueError("Internal: solver reported success but x_val was not set.")
 
-    # split to panel/fresh (always feasible since x<=Panel+Fresh)
+    # ── Equal-split with per-source caps; avoids starving Fresh ───────────────────
     out = df_long.copy()
     out["OptimizedSample"] = x_val.astype(int)
-    # greedy split
-    p_alloc = np.minimum(out["PanelPop"].to_numpy().astype(int), out["OptimizedSample"].to_numpy().astype(int))
-    f_alloc = out["OptimizedSample"].to_numpy().astype(int) - p_alloc
-    # cap fresh by FreshPop (should already fit; if not, trim and leave remainder 0)
-    f_alloc = np.minimum(f_alloc, out["FreshPop"].to_numpy().astype(int))
+    
+    # Effective per-source capacities (use per-source conversion caps if you want)
+    per_source_conv_caps = False   # ← set True if you want panel/fresh capped by conversion_rate separately
+    
+    avail_panel = out["PanelPop"].to_numpy().astype(int)
+    avail_fresh = out["FreshPop"].to_numpy().astype(int)
+    
+    if per_source_conv_caps:
+        panel_cap_eff = np.minimum(avail_panel, np.ceil(avail_panel * conversion_rate).astype(int))
+        fresh_cap_eff = np.minimum(avail_fresh, np.ceil(avail_fresh * conversion_rate).astype(int))
+        # If you enable per-source caps, also ensure earlier 'ub' used in the MIP was:
+        # ub = np.minimum.reduce([panel_cap_eff + fresh_cap_eff, np.full(n, max_cell_size)])
+        # (i.e., replace conv_ub with panel_cap_eff + fresh_cap_eff)
+    else:
+        panel_cap_eff = avail_panel
+        fresh_cap_eff = avail_fresh
+    
+    x_arr = out["OptimizedSample"].to_numpy().astype(int)
+    p_alloc = np.zeros_like(x_arr)
+    f_alloc = np.zeros_like(x_arr)
+    
+    for i in range(len(x_arr)):
+        xi = x_arr[i]
+        pc = panel_cap_eff[i]
+        fc = fresh_cap_eff[i]
+    
+        if xi <= 0 or (pc <= 0 and fc <= 0):
+            continue
+    
+        # target an equal split
+        p_des = xi // 2
+        f_des = xi - p_des
+    
+        # take as much of the target as each side can handle
+        p = min(p_des, pc)
+        f = min(f_des, fc)
+    
+        # allocate any remainder to the side with more room (prefer fresh on ties)
+        rem = xi - (p + f)
+        if rem > 0:
+            p_left = max(0, pc - p)
+            f_left = max(0, fc - f)
+            # give to fresh first to avoid zeros
+            take_f = min(rem, f_left); f += take_f; rem -= take_f
+            if rem > 0:
+                take_p = min(rem, p_left); p += take_p; rem -= take_p
+            # By construction (and because xi ≤ pc+fc), rem should be 0 here.
+    
+        p_alloc[i] = p
+        f_alloc[i] = f
+    
     out["PanelAllocated"] = p_alloc
     out["FreshAllocated"] = f_alloc
-
+    
+    def basew(row):
+        return (row["Population"] / row["OptimizedSample"]) if row["OptimizedSample"] > 0 else np.nan
+    out["BaseWeight"] = out.apply(basew, axis=1)
+    
+    return out, None, None, solver_used
     def basew(row):
         return (row["Population"] / row["OptimizedSample"]) if row["OptimizedSample"]>0 else np.nan
     out["BaseWeight"] = out.apply(basew, axis=1)
@@ -1617,6 +1668,7 @@ def main():
 if __name__=="__main__":
     import cvxpy as cp
     main()
+
 
 
 
