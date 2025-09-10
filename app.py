@@ -422,51 +422,39 @@ def run_optimization(df_wide,
                      dimension_mins,
                      conversion_rate,
                      df_panel_wide,
-                     df_fresh_wide):
+                     df_fresh_wide,
+                     time_limit_sec=20,
+                     fallback_relax_and_round=True):
     """
-    Build long table with PanelPop & FreshPop, feasibility check, solve mixed-integer model
-    that chooses PanelAllocated[i], FreshAllocated[i] subject to capacities.
+    FAST version: one integer variable per cell (x). Enforces x<=Panel+Fresh capacity,
+    then splits x into Panel/Fresh greedily after solve.
     """
     import cvxpy as cp
 
-    id_cols = ["Region", "Size"]
+    id_cols = ["Region","Size"]
     data_cols = [c for c in df_wide.columns if c not in id_cols]
 
-    # adjusted long
-    df_long = df_wide.melt(
-        id_vars=id_cols,
-        value_vars=data_cols,
-        var_name="Industry",
-        value_name="Population"
-    ).reset_index(drop=True).fillna({"Population": 0})
+    # long tables
+    df_pop = df_wide.melt(id_vars=id_cols, value_vars=data_cols,
+                          var_name="Industry", value_name="Population").fillna({"Population":0})
+    df_panel = df_panel_wide.melt(id_vars=id_cols, value_vars=data_cols,
+                                  var_name="Industry", value_name="PanelPop")
+    df_fresh = df_fresh_wide.melt(id_vars=id_cols, value_vars=data_cols,
+                                  var_name="Industry", value_name="FreshPop")
 
-    # panel/fresh longs and merge
-    df_panel_long = df_panel_wide.melt(
-        id_vars=id_cols, value_vars=data_cols,
-        var_name="Industry", value_name="PanelPop"
-    ).reset_index(drop=True)
-
-    df_fresh_long = df_fresh_wide.melt(
-        id_vars=id_cols, value_vars=data_cols,
-        var_name="Industry", value_name="FreshPop"
-    ).reset_index(drop=True)
-
-    df_long = (df_long
-               .merge(df_panel_long, on=["Region", "Size", "Industry"], how="left")
-               .merge(df_fresh_long, on=["Region", "Size", "Industry"], how="left"))
-
-    df_long[["PanelPop", "FreshPop"]] = df_long[["PanelPop", "FreshPop"]].fillna(0)
+    df_long = (df_pop
+               .merge(df_panel, on=["Region","Size","Industry"], how="left")
+               .merge(df_fresh, on=["Region","Size","Industry"], how="left"))
+    df_long[["PanelPop","FreshPop"]] = df_long[["PanelPop","FreshPop"]].fillna(0.0)
     df_long["PanelPop"] = df_long["PanelPop"].astype(float)
     df_long["FreshPop"] = df_long["FreshPop"].astype(float)
+    df_long["Avail"]    = df_long["PanelPop"] + df_long["FreshPop"]
 
-    # proportional target (for objective only)
     total_pop = df_long["Population"].sum()
-    if total_pop > 0:
-        df_long["PropSample"] = df_long["Population"] * (total_sample / total_pop)
-    else:
-        df_long["PropSample"] = 0.0
+    df_long["PropSample"] = (df_long["Population"] * (total_sample/total_pop)
+                             if total_pop>0 else 0.0)
 
-    # quick feasibility check (uses panel+fresh capacity)
+    # feasibility check (uses Avail)
     df_overall, df_cells, df_dims = detailed_feasibility_check(
         df_long, total_sample, min_cell_size, max_cell_size, max_base_weight,
         conversion_rate, dimension_mins
@@ -474,95 +462,140 @@ def run_optimization(df_wide,
     if (not df_overall.empty) or (not df_cells.empty) or (not df_dims.empty):
         return None, df_cells, df_dims, df_overall
 
-    # decision vars: p, f are integers; x = p + f (expression)
     n = len(df_long)
-    p = cp.Variable(n, integer=True)  # panel allocations
-    f = cp.Variable(n, integer=True)  # fresh allocations
+    x = cp.Variable(n, integer=True)
 
-    # constraints
-    constraints = []
-    # nonnegativity and capacity by source
-    constraints += [p >= 0, f >= 0]
-    constraints += [p <= df_long["PanelPop"].to_numpy(),
-                    f <= df_long["FreshPop"].to_numpy()]
+    avail = df_long["Avail"].to_numpy()
+    conv_ub = np.ceil(avail * conversion_rate)
+    ub = np.minimum.reduce([avail, conv_ub, np.full(n, max_cell_size)])
+    lb_bw = (df_long["Population"].to_numpy() / max_base_weight) if max_base_weight>0 else np.zeros(n)
+    lb = np.where((ub >= min_cell_size) & (avail > 0),
+                  np.maximum.reduce([lb_bw, np.full(n, min_cell_size), np.zeros(n)]),
+                  np.maximum(lb_bw, 0))
 
-    x = p + f  # total per cell
+    constraints = [x >= lb, x <= ub, cp.sum(x) == total_sample]
+    # zero out cells with no availability
+    zero_idx = np.where(avail <= 0)[0].tolist()
+    for i in zero_idx: constraints.append(x[i] == 0)
 
-    # sum target
-    constraints.append(cp.sum(x) == total_sample)
-
-    for i in range(n):
-        pop_i   = float(df_long.loc[i, "Population"])
-        panel_i = float(df_long.loc[i, "PanelPop"])
-        fresh_i = float(df_long.loc[i, "FreshPop"])
-        avail_i = panel_i + fresh_i
-
-        if avail_i <= 0:
-            constraints += [p[i] == 0, f[i] == 0]
-            continue
-
-        conv_ub = math.ceil(avail_i * conversion_rate)
-        fmax = min(avail_i, max_cell_size, conv_ub)
-
-        lb_bw = (pop_i / max_base_weight) if max_base_weight > 0 else 0
-        if fmax >= min_cell_size and avail_i > 0:
-            lb = max(lb_bw, min_cell_size, 0)
-        else:
-            lb = max(lb_bw, 0)
-
-        constraints += [x[i] >= lb, x[i] <= fmax]
-
-    # dimension minimums (on totals x)
-    dim_idx = {"Region": {}, "Size": {}, "Industry": {}}
+    # dimension mins on x
+    dim_idx = {"Region":{}, "Size":{}, "Industry":{}}
     for dt in dim_idx:
         for val in df_long[dt].unique():
-            idx_list = df_long.index[df_long[dt] == val].tolist()
-            dim_idx[dt][val] = idx_list
-
+            dim_idx[dt][val] = df_long.index[df_long[dt]==val].tolist()
     for dt, val_dict in dimension_mins.items():
         for val, req_min in val_dict.items():
-            if req_min > 0 and val in dim_idx[dt]:
-                idx_list = dim_idx[dt][val]
-                constraints.append(cp.sum(x[idx_list]) >= req_min)
+            if req_min>0 and val in dim_idx[dt]:
+                constraints.append(cp.sum(x[dim_idx[dt][val]]) >= req_min)
 
-    # objective: minimize squared deviation from proportional targets on totals
-    objective = cp.Minimize(cp.sum_squares(x - df_long["PropSample"].to_numpy()))
+    target = df_long["PropSample"].to_numpy()
+    objective = cp.Minimize(cp.sum_squares(x - target))
+    prob = cp.Problem(objective, constraints)
 
-    problem = cp.Problem(objective, constraints)
-
-    candidate_solvers = ["SCIP", "ECOS_BB"]
-    chosen_solvers = [solver_choice] + [s for s in candidate_solvers if s != solver_choice] \
-                     if solver_choice in candidate_solvers else candidate_solvers
+    # time limits / iterations
+    solver_kwargs = dict(warm_start=True, verbose=False)
+    chosen = []
+    if solver_choice in ["SCIP","ECOS_BB"]:
+        chosen = [solver_choice] + ([s for s in ["SCIP","ECOS_BB"] if s!=solver_choice])
+    else:
+        chosen = ["SCIP","ECOS_BB"]
 
     solution_found = False
-    solver_that_succeeded, last_error = None, None
-    for s in chosen_solvers:
+    last_error = None
+    for s in chosen:
         try:
-            res = problem.solve(solver=s)
-            if problem.status not in ["infeasible", "unbounded"] and p.value is not None and f.value is not None:
+            if s == "SCIP":
+                # CVXPY exposes scip_params:
+                solver_kwargs["scip_params"] = {"limits/time": float(time_limit_sec)}
+                res = prob.solve(solver=cp.SCIP, **solver_kwargs)
+            else:  # ECOS_BB
+                # ECOS_BB supports mi_max_iters; keep modest to avoid long runs.
+                res = prob.solve(solver=cp.ECOS_BB, mi_max_iters=100000, **solver_kwargs)
+
+            if prob.status not in ["infeasible","unbounded"] and x.value is not None:
                 solution_found = True
-                solver_that_succeeded = s
+                solver_used = s
                 break
         except Exception as e:
             last_error = e
 
+    # fallback: continuous relaxation + rounding (keeps bounds & total; tries to respect dims)
+    if not solution_found and fallback_relax_and_round:
+        try:
+            x_rel = cp.Variable(n)  # continuous
+            prob_rel = cp.Problem(cp.Minimize(cp.sum_squares(x_rel - target)),
+                                  [x_rel >= lb, x_rel <= ub, cp.sum(x_rel) == total_sample])
+            _ = prob_rel.solve(solver=cp.OSQP, warm_start=True, verbose=False)
+            x_star = np.clip(np.round(x_rel.value), lb, ub).astype(int)
+
+            # fix total after rounding
+            delta = int(total_sample - x_star.sum())
+            if delta != 0:
+                # distribute +/-1 to cells with largest room / largest fractional loss
+                if delta > 0:
+                    room = (ub - x_star).astype(int)
+                    order = np.argsort(-room)  # most room first
+                    for idx in order:
+                        if delta==0: break
+                        if room[idx] > 0:
+                            x_star[idx] += 1
+                            delta -= 1
+                else:
+                    room = (x_star - lb).astype(int)
+                    order = np.argsort(-room)  # most removable first
+                    for idx in order:
+                        if delta==0: break
+                        if room[idx] > 0:
+                            x_star[idx] -= 1
+                            delta += 1
+
+            # (light-touch) ensure dim mins; add where needed if capacity allows
+            for dt, val_dict in dimension_mins.items():
+                for val, req_min in val_dict.items():
+                    if req_min>0:
+                        idxs = dim_idx[dt].get(val, [])
+                        short = int(req_min - x_star[idxs].sum())
+                        if short > 0:
+                            # push into cells with slack in this dim
+                            slack_order = np.argsort(-(ub[idxs] - x_star[idxs]))
+                            for j in slack_order:
+                                if short==0: break
+                                jj = idxs[j]
+                                add = min(short, int(ub[jj] - x_star[jj]))
+                                if add>0:
+                                    x_star[jj] += add
+                                    short -= add
+
+            # final guard
+            if x_star.sum() != total_sample:
+                raise RuntimeError("Rounding failed to hit total sample exactly.")
+
+            x_val = x_star
+            solution_found = True
+            solver_used = "RELAX+ROUND"
+        except Exception as e:
+            last_error = e
+
     if not solution_found:
-        raise ValueError(f"No solver found a feasible solution among {chosen_solvers}. Last error was: {last_error}")
+        raise ValueError(f"No solver found a feasible solution (last error: {last_error})")
 
-    p_sol = np.round(p.value).astype(int)
-    f_sol = np.round(f.value).astype(int)
-    x_sol = p_sol + f_sol
-
+    # split to panel/fresh (always feasible since x<=Panel+Fresh)
     out = df_long.copy()
-    out["OptimizedSample"] = x_sol
-    out["PanelAllocated"]  = p_sol
-    out["FreshAllocated"]  = f_sol
+    out["OptimizedSample"] = x_val.astype(int)
+    # greedy split
+    p_alloc = np.minimum(out["PanelPop"].to_numpy().astype(int), out["OptimizedSample"].to_numpy().astype(int))
+    f_alloc = out["OptimizedSample"].to_numpy().astype(int) - p_alloc
+    # cap fresh by FreshPop (should already fit; if not, trim and leave remainder 0)
+    f_alloc = np.minimum(f_alloc, out["FreshPop"].to_numpy().astype(int))
+    out["PanelAllocated"] = p_alloc
+    out["FreshAllocated"] = f_alloc
 
     def basew(row):
-        return (row["Population"] / row["OptimizedSample"]) if row["OptimizedSample"] > 0 else np.nan
+        return (row["Population"] / row["OptimizedSample"]) if row["OptimizedSample"]>0 else np.nan
     out["BaseWeight"] = out.apply(basew, axis=1)
 
-    return out, None, None, solver_that_succeeded
+    return out, None, None, solver_used
+
 
 ###############################################################################
 # 4) ALLOCATE BETWEEN PANEL & FRESH
@@ -990,6 +1023,19 @@ def main():
                             dimension_mins,
                             conv_rate
                         )
+
+                        df_long_diag = (df_adjusted.melt(id_vars=["Region","Size"], var_name="Industry", value_name="Population")
+                                        .merge(df_panel_wide.melt(id_vars=["Region","Size"], value_vars=industry_cols,
+                                                                  var_name="Industry", value_name="PanelPop"),
+                                               on=["Region","Size","Industry"], how="left")
+                                        .merge(df_fresh_wide.melt(id_vars=["Region","Size"], value_vars=industry_cols,
+                                                                  var_name="Industry", value_name="FreshPop"),
+                                               on=["Region","Size","Industry"], how="left")
+                                        .fillna({"PanelPop":0,"FreshPop":0}))
+                        diag_sol, diag_usage, diag_status = diagnose_infeasibility_slacks(
+                            df_long_diag, total_sample, min_cell, max_cell, max_bw, dimension_mins, conv_rate
+                        )
+
                         scenario_result["success"]=False
                         scenario_result["error_msg"] = str(e)
                         scenario_result["diag_sol"] = diag_sol
@@ -1106,7 +1152,7 @@ def main():
                 st.data_editor(scenario1_result["pivot_panel"], use_container_width=True, key="s1_panel")
                 
                 st.subheader("Allocated Sample & Base Weights (Scenario 1)")
-                st.dataframe(scenario1_result["df_combined_style"], key="s1_combined")
+                st.dataframe(scenario1_result["df_combined"], key="s1_combined")
 
                 st.subheader("Region-wise Sample Totals (Scenario 1)")
                 st.data_editor(scenario1_result["region_totals"], use_container_width=True, key="s1_region_totals")
@@ -1537,4 +1583,5 @@ def main():
 if __name__=="__main__":
     import cvxpy as cp
     main()
+
 
