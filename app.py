@@ -254,6 +254,153 @@ def write_scenario_sheets_to_writer(
     sheet_pop = f"{scenario_label}Population" if scenario_label else "Population"
     pivot_population.to_excel(writer, sheet_name=sheet_pop, index=True)
 
+
+from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.utils import get_column_letter
+
+def _autofit_columns(ws, min_width=9, max_width=38):
+    """Auto-fit all used columns based on cell string length."""
+    dims = {}
+    for row in ws.rows:
+        for cell in row:
+            if cell.value is None:
+                continue
+            col = cell.column_letter
+            val = str(cell.value)
+            dims[col] = max(dims.get(col, 0), len(val))
+    for col, width in dims.items():
+        ws.column_dimensions[col].width = max(min_width, min(width + 2, max_width))
+
+def _format_int_block(ws, top_row, left_col, n_rows, n_cols):
+    """Apply integer formatting 0 to a rectangular block."""
+    for r in ws.iter_rows(min_row=top_row, max_row=top_row+n_rows-1,
+                          min_col=left_col, max_col=left_col+n_cols-1):
+        for c in r:
+            c.number_format = "0"
+
+def write_panel_fresh_and_mins_sheet(
+    writer,
+    sheet_name,
+    panel_df,
+    fresh_df,
+    region_mins_df,
+    size_mins_df,
+    industry_mins_df,
+    title_left="Panel",
+    title_right="Fresh",
+):
+    """
+    Create one sheet with Panel (left) and Fresh (right) side-by-side,
+    and Region/Size/Industry minimums below (three blocks side-by-side).
+    """
+    gap_cols = 2
+    startrow = 2   # leave top row for big title row, row 2 for subheaders
+    startcol = 1   # 1-based for openpyxl, but pandas uses 0-based -> we pass startcol-1
+
+    # 1) Write the two pivots
+    panel_df = panel_df.copy()
+    fresh_df = fresh_df.copy()
+    panel_df.to_excel(writer, sheet_name=sheet_name, index=False,
+                      startrow=startrow, startcol=startcol-1)
+    fresh_startcol = startcol + panel_df.shape[1] + gap_cols
+    fresh_df.to_excel(writer, sheet_name=sheet_name, index=False,
+                      startrow=startrow, startcol=fresh_startcol-1)
+
+    ws = writer.sheets[sheet_name]
+
+    # 2) Titles above each table
+    big = Font(size=13, bold=True)
+    smallbold = Font(bold=True)
+    ws.cell(row=1, column=startcol, value=f"{title_left}").font = big
+    ws.cell(row=1, column=fresh_startcol, value=f"{title_right}").font = big
+
+    # 3) Freeze panes just below headers
+    ws.freeze_panes = ws.cell(row=startrow+1, column=startcol)
+
+    # 4) Integer formatting for numeric parts of both pivots (all columns after Region/Size)
+    # Detect numeric columns by dtype in the dataframes
+    nrows_panel = panel_df.shape[0] + 1   # + header
+    ncols_panel = panel_df.shape[1]
+    nrows_fresh = fresh_df.shape[0] + 1
+    ncols_fresh = fresh_df.shape[1]
+
+    # Panel numeric block: assume first two columns are Region/Size (adjust if needed)
+    if ncols_panel >= 3:
+        _format_int_block(ws,
+                          top_row=startrow+1,
+                          left_col=startcol+2,
+                          n_rows=nrows_panel-1,
+                          n_cols=ncols_panel-2)
+
+    # Fresh numeric block
+    if ncols_fresh >= 3:
+        _format_int_block(ws,
+                          top_row=startrow+1,
+                          left_col=fresh_startcol+2,
+                          n_rows=nrows_fresh-1,
+                          n_cols=ncols_fresh-2)
+
+    # 5) Dimension minimums (three blocks below the lower of the two tables)
+    below_row = startrow + max(nrows_panel, nrows_fresh) + 2
+    ws.cell(row=below_row-1, column=startcol,
+            value="Dimension Minimums").font = smallbold
+
+    reg_startcol  = startcol
+    size_startcol = reg_startcol  + region_mins_df.shape[1] + gap_cols
+    ind_startcol  = size_startcol + size_mins_df.shape[1]   + gap_cols
+
+    # Normalize column names and order
+    reg_df  = region_mins_df.copy()
+    size_df = size_mins_df.copy()
+    ind_df  = industry_mins_df.copy()
+
+    # Write the three blocks
+    reg_df.to_excel(writer, sheet_name=sheet_name, index=False,
+                    startrow=below_row, startcol=reg_startcol-1)
+    size_df.to_excel(writer, sheet_name=sheet_name, index=False,
+                     startrow=below_row, startcol=size_startcol-1)
+    ind_df.to_excel(writer, sheet_name=sheet_name, index=False,
+                    startrow=below_row, startcol=ind_startcol-1)
+
+    # Integer formatting on MinNeeded columns if present
+    # Find "MinNeeded" col index per df (1-based in Excel)
+    def _format_mins_block(df, left_col):
+        if "MinNeeded" in df.columns:
+            col_offset = list(df.columns).index("MinNeeded")
+            _format_int_block(ws,
+                              top_row=below_row+1,
+                              left_col=left_col + col_offset,
+                              n_rows=df.shape[0],
+                              n_cols=1)
+
+    _format_mins_block(reg_df,  reg_startcol)
+    _format_mins_block(size_df, size_startcol)
+    _format_mins_block(ind_df,  ind_startcol)
+
+    # 6) Pretty widths
+    _autofit_columns(ws)
+
+    # 7) Light header fill for readability (panel + fresh + the three mins blocks)
+    header_fill = PatternFill(start_color="FFEFEFEF", end_color="FFEFEFEF", fill_type="solid")
+    # Panel header row
+    for j in range(ncols_panel):
+        ws.cell(row=startrow, column=startcol+j).fill = header_fill
+        ws.cell(row=startrow, column=startcol+j).font = smallbold
+    # Fresh header row
+    for j in range(ncols_fresh):
+        ws.cell(row=startrow, column=fresh_startcol+j).fill = header_fill
+        ws.cell(row=startrow, column=fresh_startcol+j).font = smallbold
+    # Mins headers
+    for j in range(reg_df.shape[1]):
+        ws.cell(row=below_row, column=reg_startcol+j).fill = header_fill
+        ws.cell(row=below_row, column=reg_startcol+j).font = smallbold
+    for j in range(size_df.shape[1]):
+        ws.cell(row=below_row, column=size_startcol+j).fill = header_fill
+        ws.cell(row=below_row, column=size_startcol+j).font = smallbold
+    for j in range(ind_df.shape[1]):
+        ws.cell(row=below_row, column=ind_startcol+j).fill = header_fill
+        ws.cell(row=below_row, column=ind_startcol+j).font = smallbold
+
 ###############################################################################
 # 2) FEASIBILITY & SLACK DIAGNOSTICS
 ###############################################################################
@@ -1609,6 +1756,36 @@ def main():
                 size_mins.to_excel(writer, sheet_name=sheet_pm, index=False, startrow=r)
                 r += size_mins.shape[0] + 2
                 industry_mins.to_excel(writer, sheet_name=sheet_pm, index=False, startrow=r)
+
+                # ---- Side-by-side sheets with mins (Scenario 1) ----
+                if scenario1_result.get("success"):
+                    # S1-specific mins (already built above): region_min_df, size_min_df, industry_min_df
+                    write_panel_fresh_and_mins_sheet(
+                        writer=writer,
+                        sheet_name="S1_PanelFresh+Mins",
+                        panel_df=scenario1_result["pivot_panel"],
+                        fresh_df=scenario1_result["pivot_fresh"],
+                        region_mins_df=region_min_df.rename(columns={"MinNeeded": "MinNeeded"}),
+                        size_mins_df=size_min_df.rename(columns={"MinNeeded": "MinNeeded"}),
+                        industry_mins_df=industry_min_df.rename(columns={"MinNeeded": "MinNeeded"}),
+                        title_left="Panel (Scenario 1)",
+                        title_right="Fresh (Scenario 1)",
+                    )
+                
+                # ---- Side-by-side sheets with mins (Scenario 2) ----
+                if scenario2_result.get("success"):
+                    write_panel_fresh_and_mins_sheet(
+                        writer=writer,
+                        sheet_name="S2_PanelFresh+Mins",
+                        panel_df=scenario2_result["pivot_panel"],
+                        fresh_df=scenario2_result["pivot_fresh"],
+                        region_mins_df=region_min_df2.rename(columns={"MinNeeded": "MinNeeded"}),
+                        size_mins_df=size_min_df2.rename(columns={"MinNeeded": "MinNeeded"}),
+                        industry_mins_df=industry_min_df2.rename(columns={"MinNeeded": "MinNeeded"}),
+                        title_left="Panel (Scenario 2)",
+                        title_right="Fresh (Scenario 2)",
+                    )
+
             
                 # 3) All Samples & BaseWeights (S1 & S2 stacked)
                 def reorder_samples(df):
@@ -1751,6 +1928,7 @@ def main():
 if __name__=="__main__":
     import cvxpy as cp
     main()
+
 
 
 
