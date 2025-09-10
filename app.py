@@ -24,6 +24,23 @@ import os
 
 SESSIONS_DIR = "sessions"  # local folder to store session JSON files
 
+
+def show_side_by_side(df_left, title_left, df_right, title_right, key_left, key_right, editable=False):
+    """Render two dataframes side-by-side; use_editor=True to allow editing."""
+    c1, c2 = st.columns(2, gap="small")
+    with c1:
+        st.markdown(f"**{title_left}**")
+        if editable:
+            st.data_editor(df_left, use_container_width=True, key=key_left)
+        else:
+            st.dataframe(df_left, use_container_width=True, key=key_left)
+    with c2:
+        st.markdown(f"**{title_right}**")
+        if editable:
+            st.data_editor(df_right, use_container_width=True, key=key_right)
+        else:
+            st.dataframe(df_right, use_container_width=True, key=key_right)
+
 def init_sessions_dir():
     """Ensure we have a 'sessions' subfolder to store JSON files."""
     if not os.path.exists(SESSIONS_DIR):
@@ -849,10 +866,19 @@ def main():
             st.error(f"Error reading 'panel'/'fresh' => {e}")
             return
 
-        with st.expander("Original Panel Table"):
-            st.data_editor(df_panel_wide, use_container_width=True, key="wide_panel_scenario")
-        with st.expander("Original Fresh Table"):
-            st.data_editor(df_fresh_wide, use_container_width=True, key="wide_fresh_scenario")
+        with st.expander("Original input tables (edit as needed)"):
+            show_side_by_side(
+                df_panel_wide, "Panel (input)",
+                df_fresh_wide, "Fresh (input)",
+                key_left="wide_panel_scenario",
+                key_right="wide_fresh_scenario",
+                editable=True
+            )
+
+#        with st.expander("Original Panel Table"):
+#            st.data_editor(df_panel_wide, use_container_width=True, key="wide_panel_scenario")
+ #       with st.expander("Original Fresh Table"):
+  #          st.data_editor(df_fresh_wide, use_container_width=True, key="wide_fresh_scenario")
 
         # build Adjusted Universe
         df_adjusted= df_panel_wide.copy()
@@ -1231,10 +1257,12 @@ def main():
                 solver1_info = scenario1_result["solver_info"]
                 st.success(f"Solved with solver: {solver1_info}")
 
-                st.subheader("Fresh (Scenario 1)")
-                st.data_editor(scenario1_result["pivot_fresh"], use_container_width=True, key="s1_fresh")
-                st.subheader("Panel (Scenario 1)")
-                st.data_editor(scenario1_result["pivot_panel"], use_container_width=True, key="s1_panel")
+                show_side_by_side(
+                    scenario1_result["pivot_panel"], "Panel (Scenario 1)",
+                    scenario1_result["pivot_fresh"], "Fresh (Scenario 1)",
+                    key_left="s1_panel", key_right="s1_fresh", editable=False
+                )
+
                 
                 st.subheader("Allocated Sample & Base Weights (Scenario 1)")
                 st.dataframe(scenario1_result["df_combined"], key="s1_combined")
@@ -1244,6 +1272,19 @@ def main():
 
                 st.subheader("Size-wise Sample Totals (Scenario 1)")
                 st.data_editor(scenario1_result["size_totals"], use_container_width=True, key="s1_size_totals")
+
+                # Region totals side-by-side (panel vs fresh)
+                reg_panel = scenario1_result["region_totals"][["Region","PanelAllocated"]].rename(columns={"PanelAllocated":"Panel"})
+                reg_fresh = scenario1_result["region_totals"][["Region","FreshAllocated"]].rename(columns={"FreshAllocated":"Fresh"})
+                show_side_by_side(reg_panel, "Region totals – Panel (S1)", reg_fresh, "Region totals – Fresh (S1)",
+                                  key_left="s1_reg_panel", key_right="s1_reg_fresh", editable=False)
+                
+                # Size totals side-by-side (panel vs fresh)
+                sz_panel = scenario1_result["size_totals"][["Size","PanelAllocated"]].rename(columns={"PanelAllocated":"Panel"})
+                sz_fresh = scenario1_result["size_totals"][["Size","FreshAllocated"]].rename(columns={"FreshAllocated":"Fresh"})
+                show_side_by_side(sz_panel, "Size totals – Panel (S1)", sz_fresh, "Size totals – Fresh (S1)",
+                                  key_left="s1_size_panel", key_right="s1_size_fresh", editable=False)
+
 
 
             # show scenario 2
@@ -1282,10 +1323,11 @@ def main():
                 solver2_info = scenario2_result["solver_info"]
                 st.success(f"Solved with solver: {solver2_info}")
                
-                st.subheader("Fresh (Scenario 2)")
-                st.data_editor(scenario2_result["pivot_fresh"], use_container_width=True, key="s2_fresh")
-                st.subheader("Panel (Scenario 2)")
-                st.data_editor(scenario2_result["pivot_panel"], use_container_width=True, key="s2_panel")
+               show_side_by_side(
+                scenario2_result["pivot_panel"], "Panel (Scenario 2)",
+                scenario2_result["pivot_fresh"], "Fresh (Scenario 2)",
+                key_left="s2_panel", key_right="s2_fresh", editable=False
+            )
 
                 
                 st.subheader("Allocated Sample & Base Weights (Scenario 2)")
@@ -1296,6 +1338,17 @@ def main():
 
                 st.subheader("Size-wise Sample Totals (Scenario 2)")
                 st.data_editor(scenario2_result["size_totals"], use_container_width=True, key="s2_size_totals")
+
+                reg_panel2 = scenario2_result["region_totals"][["Region","PanelAllocated"]].rename(columns={"PanelAllocated":"Panel"})
+                reg_fresh2 = scenario2_result["region_totals"][["Region","FreshAllocated"]].rename(columns={"FreshAllocated":"Fresh"})
+                show_side_by_side(reg_panel2, "Region totals – Panel (S2)", reg_fresh2, "Region totals – Fresh (S2)",
+                                  key_left="s2_reg_panel", key_right="s2_reg_fresh", editable=False)
+                
+                sz_panel2 = scenario2_result["size_totals"][["Size","PanelAllocated"]].rename(columns={"PanelAllocated":"Panel"})
+                sz_fresh2 = scenario2_result["size_totals"][["Size","FreshAllocated"]].rename(columns={"FreshAllocated":"Fresh"})
+                show_side_by_side(sz_panel2, "Size totals – Panel (S2)", sz_fresh2, "Size totals – Fresh (S2)",
+                                  key_left="s2_size_panel", key_right="s2_size_fresh", editable=False)
+
 
             
 
@@ -1668,6 +1721,7 @@ def main():
 if __name__=="__main__":
     import cvxpy as cp
     main()
+
 
 
 
