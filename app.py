@@ -430,7 +430,8 @@ def run_optimization(df_wide,
     then splits x into Panel/Fresh greedily after solve.
     """
     import cvxpy as cp
-
+    x_val = None
+    solver_used = None
     id_cols = ["Region","Size"]
     data_cols = [c for c in df_wide.columns if c not in id_cols]
 
@@ -515,6 +516,37 @@ def run_optimization(df_wide,
             if prob.status not in ["infeasible","unbounded"] and x.value is not None:
                 solution_found = True
                 solver_used = s
+
+            if prob.status not in ["infeasible", "unbounded"] and x.value is not None:
+                solution_found = True
+                solver_used = s
+            
+                # NEW: set x_val on MIP success and make it cleanly integral & feasible
+                x_raw = np.asarray(x.value).reshape(-1)
+                x_val = np.rint(x_raw)                 # round to nearest
+                x_val = np.clip(x_val, lb, ub)         # obey bounds
+                x_val = x_val.astype(int)
+            
+                # exact total fix (rarely needed due to tolerances)
+                delta = int(total_sample - x_val.sum())
+                if delta != 0:
+                    if delta > 0:
+                        room = (ub - x_val).astype(int)
+                        for idx in np.argsort(-room):          # most room first
+                            if delta == 0: break
+                            add = min(delta, room[idx])
+                            if add > 0:
+                                x_val[idx] += add
+                                delta -= add
+                    else:
+                        room = (x_val - lb).astype(int)
+                        for idx in np.argsort(-room):          # most removable first
+                            if delta == 0: break
+                            sub = min(-delta, room[idx])
+                            if sub > 0:
+                                x_val[idx] -= sub
+                                delta += sub
+                
                 break
         except Exception as e:
             last_error = e
@@ -578,6 +610,8 @@ def run_optimization(df_wide,
 
     if not solution_found:
         raise ValueError(f"No solver found a feasible solution (last error: {last_error})")
+    if x_val is None:
+        raise ValueError("Internal: solver reported success but x_val was not set.")
 
     # split to panel/fresh (always feasible since x<=Panel+Fresh)
     out = df_long.copy()
@@ -1583,5 +1617,6 @@ def main():
 if __name__=="__main__":
     import cvxpy as cp
     main()
+
 
 
