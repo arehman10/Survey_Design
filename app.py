@@ -37,9 +37,9 @@ def show_side_by_side(df_left, title_left, df_right, title_right, key_left, key_
     with c2:
         st.markdown(f"**{title_right}**")
         if editable:
-            st.data_editor(df_right, use_container_width=True, key=key_right)
+            st.data_editor(df_right, use_container_width=True, height=520, key=key_right)
         else:
-            st.dataframe(df_right, use_container_width=True, key=key_right)
+            st.dataframe(df_right, use_container_width=True, height=520, key=key_right)
 
 def init_sessions_dir():
     """Ensure we have a 'sessions' subfolder to store JSON files."""
@@ -1751,6 +1751,7 @@ def main():
 if __name__=="__main__":
     import cvxpy as cp
     main()
+
 
 
 
