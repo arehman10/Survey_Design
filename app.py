@@ -1323,7 +1323,7 @@ def main():
                 solver2_info = scenario2_result["solver_info"]
                 st.success(f"Solved with solver: {solver2_info}")
                
-               show_side_by_side(
+                show_side_by_side(
                     scenario2_result["pivot_panel"], "Panel (Scenario 2)",
                     scenario2_result["pivot_fresh"], "Fresh (Scenario 2)",
                     key_left="s2_panel", key_right="s2_fresh", editable=False
@@ -1721,6 +1721,7 @@ def main():
 if __name__=="__main__":
     import cvxpy as cp
     main()
+
 
 
 
