@@ -31,9 +31,9 @@ def show_side_by_side(df_left, title_left, df_right, title_right, key_left, key_
     with c1:
         st.markdown(f"**{title_left}**")
         if editable:
-            st.data_editor(df_left, use_container_width=True, key=key_left)
+            st.data_editor(df_left, use_container_width=True, height=520, key=key_left)
         else:
-            st.dataframe(df_left, use_container_width=True, key=key_left)
+            st.dataframe(df_left, use_container_width=True, height=520, key=key_left)
     with c2:
         st.markdown(f"**{title_right}**")
         if editable:
@@ -738,6 +738,36 @@ def allocate_panel_fresh(df_long_sol, df_panel_wide, df_fresh_wide):
 ###############################################################################
 # 5) MAIN APP (SAME STRUCTURE, ADDED SAVE/LOAD SESSION)
 ###############################################################################
+
+st.set_page_config(
+    page_title="Survey Design",
+    layout="wide",                      # <<< key
+    initial_sidebar_state="expanded"
+)
+st.markdown("""
+<style>
+/* widen the main block and trim horizontal padding */
+[data-testid="stAppViewContainer"] > .main {
+  max-width: 100%;
+  padding-left: 1rem;
+  padding-right: 1rem;
+}
+
+/* also let the inner block container span wide */
+.block-container {
+  max-width: 100%;
+  padding-top: 1rem;
+  padding-bottom: 1rem;
+}
+
+/* optional: slightly tighter gap between columns */
+[data-testid="stHorizontalBlock"] {
+  gap: 0.75rem !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+
 def main():
     st.title("Survey Design")
 
@@ -1721,6 +1751,7 @@ def main():
 if __name__=="__main__":
     import cvxpy as cp
     main()
+
 
 
 
