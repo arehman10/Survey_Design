@@ -577,6 +577,7 @@ def diagnose_infeasibility_slacks(df_long,
 ###############################################################################
 # 3) MAIN SOLVER
 ###############################################################################
+'''
 def run_optimization(df_wide,
                      total_sample,
                      min_cell_size,
@@ -585,13 +586,15 @@ def run_optimization(df_wide,
                      solver_choice,
                      dimension_mins,
                      conversion_rate,
-                     df_panel_wide,
-                     df_fresh_wide,
+                     df_frame_panel_wide,
+                     df_frame_fresh_wide,
                      time_limit_sec=20,
                      fallback_relax_and_round=True):
     """
-    FAST version: one integer variable per cell (x). Enforces x<=Panel+Fresh capacity,
-    then splits x into Panel/Fresh greedily after solve.
+    Uses *frame* capacities for feasibility and allocation:
+      PanelAllocated[i] ≤ frame_panel capacity, FreshAllocated[i] ≤ frame_fresh capacity.
+      x[i] = PanelAllocated[i] + FreshAllocated[i].
+    Universe (Population/PropSample) still comes from df_wide (built from panel/fresh).
     """
     import cvxpy as cp
     x_val = None
@@ -844,7 +847,145 @@ def run_optimization(df_wide,
     out["BaseWeight"] = out.apply(basew, axis=1)
 
     return out, None, None, solver_used
+'''
+def run_optimization(df_wide,
+                     total_sample,
+                     min_cell_size,
+                     max_cell_size,
+                     max_base_weight,
+                     solver_choice,
+                     dimension_mins,
+                     conversion_rate,
+                     df_frame_panel_wide,
+                     df_frame_fresh_wide):
+    """
+    Uses *frame* capacities for feasibility and allocation:
+      PanelAllocated[i] ≤ frame_panel capacity, FreshAllocated[i] ≤ frame_fresh capacity.
+      x[i] = PanelAllocated[i] + FreshAllocated[i].
+    Universe (Population/PropSample) still comes from df_wide (built from panel/fresh).
+    """
+    import cvxpy as cp
 
+    id_cols = ["Region", "Size"]
+    data_cols = [c for c in df_wide.columns if c not in id_cols]
+
+    # adjusted long (universe, for PropSample, baseweight numerator)
+    df_long = df_wide.melt(
+        id_vars=id_cols,
+        value_vars=data_cols,
+        var_name="Industry",
+        value_name="Population"
+    ).reset_index(drop=True).fillna({"Population": 0})
+
+    # CAPACITIES from frames:
+    frame_panel_long = df_frame_panel_wide.melt(
+        id_vars=id_cols, value_vars=[c for c in df_frame_panel_wide.columns if c not in id_cols],
+        var_name="Industry", value_name="PanelPop"
+    ).reset_index(drop=True)
+
+    frame_fresh_long = df_frame_fresh_wide.melt(
+        id_vars=id_cols, value_vars=[c for c in df_frame_fresh_wide.columns if c not in id_cols],
+        var_name="Industry", value_name="FreshPop"
+    ).reset_index(drop=True)
+
+    df_long = (df_long
+               .merge(frame_panel_long, on=["Region", "Size", "Industry"], how="left")
+               .merge(frame_fresh_long, on=["Region", "Size", "Industry"], how="left"))
+
+    df_long[["PanelPop", "FreshPop"]] = df_long[["PanelPop", "FreshPop"]].fillna(0.0)
+    df_long["PanelPop"] = df_long["PanelPop"].astype(float)
+    df_long["FreshPop"] = df_long["FreshPop"].astype(float)
+
+    # proportional target (for objective only)
+    total_pop = df_long["Population"].sum()
+    df_long["PropSample"] = df_long["Population"] * (total_sample / total_pop) if total_pop > 0 else 0.0
+
+    # ---- Feasibility pre-check (uses frame capacities) ----
+    df_overall, df_cells, df_dims = detailed_feasibility_check(
+        df_long, total_sample, min_cell_size, max_cell_size, max_base_weight,
+        conversion_rate, dimension_mins
+    )
+    if (not df_overall.empty) or (not df_cells.empty) or (not df_dims.empty):
+        return None, df_cells, df_dims, df_overall
+
+    # decision vars: panel & fresh per cell
+    n = len(df_long)
+    p = cp.Variable(n, integer=True)  # PanelAllocated
+    f = cp.Variable(n, integer=True)  # FreshAllocated
+    x = p + f
+
+    constraints = [p >= 0, f >= 0]
+    constraints += [p <= df_long["PanelPop"].to_numpy(),
+                    f <= df_long["FreshPop"].to_numpy()]
+    constraints.append(cp.sum(x) == total_sample)
+
+    for i in range(n):
+        pop_i   = float(df_long.loc[i, "Population"])
+        panel_i = float(df_long.loc[i, "PanelPop"])
+        fresh_i = float(df_long.loc[i, "FreshPop"])
+        avail_i = panel_i + fresh_i
+
+        if avail_i <= 0:
+            constraints += [p[i] == 0, f[i] == 0]
+            continue
+
+        conv_ub = math.ceil(avail_i * conversion_rate)
+        fmax = min(avail_i, max_cell_size, conv_ub)
+
+        lb_bw = (pop_i / max_base_weight) if max_base_weight > 0 else 0
+        if fmax >= min_cell_size and avail_i > 0:
+            lb = max(lb_bw, min_cell_size, 0)
+        else:
+            lb = max(lb_bw, 0)
+
+        constraints += [x[i] >= lb, x[i] <= fmax]
+
+    # dimension minimums on totals x
+    dim_idx = {"Region": {}, "Size": {}, "Industry": {}}
+    for dt in dim_idx:
+        for val in df_long[dt].unique():
+            idx_list = df_long.index[df_long[dt] == val].tolist()
+            dim_idx[dt][val] = idx_list
+
+    for dt, val_dict in dimension_mins.items():
+        for val, req_min in val_dict.items():
+            if req_min > 0 and val in dim_idx[dt]:
+                constraints.append(cp.sum(x[dim_idx[dt][val]]) >= req_min)
+
+    objective = cp.Minimize(cp.sum_squares(x - df_long["PropSample"].to_numpy()))
+
+    problem = cp.Problem(objective, constraints)
+    candidate_solvers = ["SCIP", "ECOS_BB"]
+    chosen_solvers = [solver_choice] + [s for s in candidate_solvers if s != solver_choice] \
+                     if solver_choice in candidate_solvers else candidate_solvers
+
+    solution_found, solver_that_succeeded, last_error = False, None, None
+    for s in chosen_solvers:
+        try:
+            res = problem.solve(solver=s)
+            if problem.status not in ["infeasible","unbounded"] and p.value is not None and f.value is not None:
+                solution_found, solver_that_succeeded = True, s
+                break
+        except Exception as e:
+            last_error = e
+
+    if not solution_found:
+        raise ValueError(f"No solver found a feasible solution among {chosen_solvers}. Last error was: {last_error}")
+
+    p_sol = np.round(p.value).astype(int)
+    f_sol = np.round(f.value).astype(int)
+    x_sol = p_sol + f_sol
+
+    out = df_long.copy()
+    out["OptimizedSample"] = x_sol
+    out["PanelAllocated"]  = p_sol
+    out["FreshAllocated"]  = f_sol
+
+    def basew(row):
+        return (row["Population"] / row["OptimizedSample"]) if row["OptimizedSample"] > 0 else np.nan
+    out["BaseWeight"] = out.apply(basew, axis=1)
+
+    return out, None, None, solver_that_succeeded
 
 ###############################################################################
 # 4) ALLOCATE BETWEEN PANEL & FRESH
@@ -1043,6 +1184,46 @@ def main():
             st.error(f"Error reading 'panel'/'fresh' => {e}")
             return
 
+        try:
+            df_frame_panel_wide = pd.read_excel(uploaded_file, sheet_name="frame_panel")
+            df_frame_fresh_wide = pd.read_excel(uploaded_file, sheet_name="frame_fresh")
+        except Exception as e:
+            st.error(f"Error reading 'frame_panel'/'frame_fresh' => {e}")
+            return
+
+        
+        # Show as expanders (dropdowns)
+        with st.expander("Frame – Panel (frame_panel)"):
+            st.data_editor(df_frame_panel_wide, use_container_width=True, key="frame_panel_table")
+        
+        with st.expander("Frame – Fresh (frame_fresh)"):
+            st.data_editor(df_frame_fresh_wide, use_container_width=True, key="frame_fresh_table")
+        
+        # Optional: one quick dropdown viewer for any input table
+        with st.expander("Quick Table Viewer"):
+            table_choice = st.selectbox(
+                "Pick a table to preview",
+                ["panel", "fresh", "frame_panel", "frame_fresh"],
+                index=0,
+                key="table_choice"
+            )
+            _map = {
+                "panel": df_panel_wide,
+                "fresh": df_fresh_wide,
+                "frame_panel": df_frame_panel_wide,
+                "frame_fresh": df_frame_fresh_wide,
+            }
+            st.data_editor(_map[table_choice], use_container_width=True, key="table_choice_view")
+        id_cols = ["Region","Size"]
+        industry_cols = [c for c in df_panel_wide.columns if c not in id_cols]
+        
+        missing_fp = set(industry_cols) - set(df_frame_panel_wide.columns)
+        missing_ff = set(industry_cols) - set(df_frame_fresh_wide.columns)
+        if missing_fp:
+            st.warning(f"'frame_panel' missing industries: {sorted(missing_fp)}")
+        if missing_ff:
+            st.warning(f"'frame_fresh' missing industries: {sorted(missing_ff)}")
+        
         with st.expander("Original input tables (edit as needed)"):
             show_side_by_side(
                 df_panel_wide, "Panel (input)",
@@ -1149,17 +1330,18 @@ def main():
                 scenario_result = {}
                 try:
                     df_long_final, df_cell_conf, df_dim_conf, solver_info = run_optimization(
-                    df_wide=df_adjusted,
-                    total_sample=total_sample,
-                    min_cell_size=min_cell,
-                    max_cell_size=max_cell,
-                    max_base_weight=max_bw,
-                    solver_choice=solver,
-                    dimension_mins=dimension_mins,
-                    conversion_rate=conv_rate,
-                    df_panel_wide=df_panel_wide,
-                    df_fresh_wide=df_fresh_wide,
-                )
+                        df_wide=df_adjusted,
+                        total_sample=total_sample,
+                        min_cell_size=min_cell,
+                        max_cell_size=max_cell,
+                        max_base_weight=max_bw,
+                        solver_choice=solver,
+                        dimension_mins=dimension_mins,
+                        conversion_rate=conv_rate,
+                        df_frame_panel_wide=df_frame_panel_wide,
+                        df_frame_fresh_wide=df_frame_fresh_wide,
+                    )
+                
                     if df_long_final is None:
                         # single-constraint conflict
                         scenario_result["success"] = False
@@ -1928,6 +2110,7 @@ def main():
 if __name__=="__main__":
     import cvxpy as cp
     main()
+
 
 
 
