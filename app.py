@@ -586,135 +586,302 @@ def run_optimization(df_wide,
                      dimension_mins,
                      conversion_rate,
                      df_frame_panel_wide,
-                     df_frame_fresh_wide):
+                     df_frame_fresh_wide,
+                     time_limit_sec=20,
+                     fallback_relax_and_round=True,
+                     per_source_conv_caps=False  # set True if you want per-source conversion caps
+                     ):
     """
-    Uses *frame* capacities for feasibility and allocation:
-      PanelAllocated[i] ≤ frame_panel capacity, FreshAllocated[i] ≤ frame_fresh capacity.
-      x[i] = PanelAllocated[i] + FreshAllocated[i].
-    Universe (Population/PropSample) still comes from df_wide (built from panel/fresh).
+    Fast MIP on totals x[i] using *frame* capacities (panel/fresh) as feasibility
+    and then a guaranteed-feasible split into PanelAllocated/FreshAllocated.
+
+    - Universe (Population, PropSample) comes from df_wide (adjusted with panel/fresh as you already do).
+    - Capacity/feasibility come from frame tables:
+        PanelAllocated[i] <= frame_panel
+        FreshAllocated[i] <= frame_fresh
+        x[i]              <= frame_panel + frame_fresh (and conversion & max_cell_size)
+    - Dimension minimums apply to totals x (not per-source).
     """
     import cvxpy as cp
 
-    id_cols = ["Region", "Size"]
+    # ---------- Build long tables ----------
+    id_cols  = ["Region", "Size"]
     data_cols = [c for c in df_wide.columns if c not in id_cols]
 
-    # adjusted long (universe, for PropSample, baseweight numerator)
-    df_long = df_wide.melt(
-        id_vars=id_cols,
-        value_vars=data_cols,
-        var_name="Industry",
-        value_name="Population"
-    ).reset_index(drop=True).fillna({"Population": 0})
+    # Population/universe
+    df_pop = df_wide.melt(
+        id_vars=id_cols, value_vars=data_cols,
+        var_name="Industry", value_name="Population"
+    ).fillna({"Population": 0})
 
-    # CAPACITIES from frames:
-    frame_panel_long = df_frame_panel_wide.melt(
+    # Capacities from FRAME sheets (not the 'panel'/'fresh' universes)
+    df_panel = df_frame_panel_wide.melt(
         id_vars=id_cols, value_vars=[c for c in df_frame_panel_wide.columns if c not in id_cols],
         var_name="Industry", value_name="PanelPop"
-    ).reset_index(drop=True)
-
-    frame_fresh_long = df_frame_fresh_wide.melt(
+    )
+    df_fresh = df_frame_fresh_wide.melt(
         id_vars=id_cols, value_vars=[c for c in df_frame_fresh_wide.columns if c not in id_cols],
         var_name="Industry", value_name="FreshPop"
-    ).reset_index(drop=True)
+    )
 
-    df_long = (df_long
-               .merge(frame_panel_long, on=["Region", "Size", "Industry"], how="left")
-               .merge(frame_fresh_long, on=["Region", "Size", "Industry"], how="left"))
+    df_long = (df_pop
+               .merge(df_panel, on=["Region","Size","Industry"], how="left")
+               .merge(df_fresh, on=["Region","Size","Industry"], how="left"))
 
-    df_long[["PanelPop", "FreshPop"]] = df_long[["PanelPop", "FreshPop"]].fillna(0.0)
+    df_long[["PanelPop","FreshPop"]] = df_long[["PanelPop","FreshPop"]].fillna(0.0)
     df_long["PanelPop"] = df_long["PanelPop"].astype(float)
     df_long["FreshPop"] = df_long["FreshPop"].astype(float)
+    df_long["Avail"]    = df_long["PanelPop"] + df_long["FreshPop"]
 
-    # proportional target (for objective only)
-    total_pop = df_long["Population"].sum()
-    df_long["PropSample"] = df_long["Population"] * (total_sample / total_pop) if total_pop > 0 else 0.0
+    # Proportional target for objective
+    total_pop = float(df_long["Population"].sum())
+    df_long["PropSample"] = (df_long["Population"] * (total_sample / total_pop)) if total_pop > 0 else 0.0
 
-    # ---- Feasibility pre-check (uses frame capacities) ----
+    # ---------- Single-constraint feasibility pre-check (capacity-aware) ----------
     df_overall, df_cells, df_dims = detailed_feasibility_check(
         df_long, total_sample, min_cell_size, max_cell_size, max_base_weight,
         conversion_rate, dimension_mins
     )
     if (not df_overall.empty) or (not df_cells.empty) or (not df_dims.empty):
+        # Return None to signal conflict, same as your app expects
         return None, df_cells, df_dims, df_overall
 
-    # decision vars: panel & fresh per cell
+    # ---------- Build MIP on totals x ----------
     n = len(df_long)
-    p = cp.Variable(n, integer=True)  # PanelAllocated
-    f = cp.Variable(n, integer=True)  # FreshAllocated
-    x = p + f
+    x = cp.Variable(n, integer=True)
 
-    constraints = [p >= 0, f >= 0]
-    constraints += [p <= df_long["PanelPop"].to_numpy(),
-                    f <= df_long["FreshPop"].to_numpy()]
-    constraints.append(cp.sum(x) == total_sample)
+    avail   = df_long["Avail"].to_numpy()
+    pop_arr = df_long["Population"].to_numpy()
 
-    for i in range(n):
-        pop_i   = float(df_long.loc[i, "Population"])
-        panel_i = float(df_long.loc[i, "PanelPop"])
-        fresh_i = float(df_long.loc[i, "FreshPop"])
-        avail_i = panel_i + fresh_i
+    # Upper bounds: availability, conversion, cell max
+    if per_source_conv_caps:
+        # Optional: cap each source by its own conversion, then sum caps
+        panel_cap_eff = np.minimum(df_long["PanelPop"].to_numpy(),
+                                   np.ceil(df_long["PanelPop"].to_numpy() * conversion_rate))
+        fresh_cap_eff = np.minimum(df_long["FreshPop"].to_numpy(),
+                                   np.ceil(df_long["FreshPop"].to_numpy() * conversion_rate))
+        conv_ub = panel_cap_eff + fresh_cap_eff
+    else:
+        conv_ub = np.ceil(avail * conversion_rate)
 
-        if avail_i <= 0:
-            constraints += [p[i] == 0, f[i] == 0]
-            continue
+    ub_float = np.minimum.reduce([avail, conv_ub, np.full(n, max_cell_size, dtype=float)])
+    ub_int   = np.maximum(0, np.floor(ub_float)).astype(int)
 
-        conv_ub = math.ceil(avail_i * conversion_rate)
-        fmax = min(avail_i, max_cell_size, conv_ub)
+    # Lower bounds: base-weight and min cell size when feasible
+    lb_bw = (pop_arr / max_base_weight) if max_base_weight > 0 else np.zeros(n)
+    min_cell_arr = np.full(n, min_cell_size, dtype=float)
+    lb_float = np.where((ub_float >= min_cell_size) & (avail > 0),
+                        np.maximum.reduce([lb_bw, min_cell_arr, np.zeros(n)]),
+                        np.maximum(lb_bw, 0))
+    lb_int = np.maximum(0, np.ceil(lb_float)).astype(int)
 
-        lb_bw = (pop_i / max_base_weight) if max_base_weight > 0 else 0
-        if fmax >= min_cell_size and avail_i > 0:
-            lb = max(lb_bw, min_cell_size, 0)
-        else:
-            lb = max(lb_bw, 0)
+    # If any lb > ub after rounding, we already caught that in feasibility_check; but guard anyway:
+    infeas_mask = lb_int > ub_int
+    if np.any(infeas_mask):
+        # translate to the app's conflict shape
+        bad_idx = np.where(infeas_mask)[0]
+        _cells = []
+        for i in bad_idx:
+            _cells.append({
+                "CellIndex": int(i),
+                "Region": df_long.loc[i,"Region"],
+                "Size": df_long.loc[i,"Size"],
+                "Industry": df_long.loc[i,"Industry"],
+                "LowerBound": int(lb_int[i]),
+                "FeasibleMax": int(ub_int[i]),
+                "Reason": "Rounded LB > UB"
+            })
+        return None, pd.DataFrame(_cells), pd.DataFrame(), pd.DataFrame()
 
-        constraints += [x[i] >= lb, x[i] <= fmax]
+    # Constraints
+    constraints = [x >= lb_int, x <= ub_int, cp.sum(x) == total_sample]
 
-    # dimension minimums on totals x
+    # Dimension mins on totals x
     dim_idx = {"Region": {}, "Size": {}, "Industry": {}}
     for dt in dim_idx:
         for val in df_long[dt].unique():
-            idx_list = df_long.index[df_long[dt] == val].tolist()
-            dim_idx[dt][val] = idx_list
-
+            dim_idx[dt][val] = df_long.index[df_long[dt] == val].tolist()
     for dt, val_dict in dimension_mins.items():
         for val, req_min in val_dict.items():
             if req_min > 0 and val in dim_idx[dt]:
                 constraints.append(cp.sum(x[dim_idx[dt][val]]) >= req_min)
 
-    objective = cp.Minimize(cp.sum_squares(x - df_long["PropSample"].to_numpy()))
+    # Objective
+    target = df_long["PropSample"].to_numpy()
+    objective = cp.Minimize(cp.sum_squares(x - target))
+    prob = cp.Problem(objective, constraints)
 
-    problem = cp.Problem(objective, constraints)
-    candidate_solvers = ["SCIP", "ECOS_BB"]
-    chosen_solvers = [solver_choice] + [s for s in candidate_solvers if s != solver_choice] \
-                     if solver_choice in candidate_solvers else candidate_solvers
+    # ---------- Solve with time limits; then relax+round if needed ----------
+    solver_used = None
+    x_val = None
+    solver_kwargs = dict(warm_start=True, verbose=False)
+    if solver_choice in ["SCIP", "ECOS_BB"]:
+        chosen = [solver_choice] + [s for s in ["SCIP","ECOS_BB"] if s != solver_choice]
+    else:
+        chosen = ["SCIP", "ECOS_BB"]
 
-    solution_found, solver_that_succeeded, last_error = False, None, None
-    for s in chosen_solvers:
+    solution_found, last_error = False, None
+    for s in chosen:
         try:
-            res = problem.solve(solver=s)
-            if problem.status not in ["infeasible","unbounded"] and p.value is not None and f.value is not None:
-                solution_found, solver_that_succeeded = True, s
-                break
+            if s == "SCIP":
+                solver_kwargs["scip_params"] = {"limits/time": float(time_limit_sec)}
+                _ = prob.solve(solver=cp.SCIP, **solver_kwargs)
+            else:
+                _ = prob.solve(solver=cp.ECOS_BB, mi_max_iters=100000, **solver_kwargs)
+
+            if prob.status not in ["infeasible", "unbounded"] and x.value is not None:
+                xr = np.rint(np.asarray(x.value).reshape(-1)).astype(int)
+                # clamp to integer bounds
+                xr = np.minimum(np.maximum(xr, lb_int), ub_int)
+
+                # fix sum if needed
+                delta = int(total_sample - xr.sum())
+                if delta != 0:
+                    if delta > 0:
+                        room = (ub_int - xr)
+                        for idx in np.argsort(-room):
+                            if delta == 0: break
+                            add = min(delta, int(room[idx]))
+                            if add > 0:
+                                xr[idx] += add
+                                delta -= add
+                    else:
+                        room = (xr - lb_int)
+                        for idx in np.argsort(-room):
+                            if delta == 0: break
+                            sub = min(-delta, int(room[idx]))
+                            if sub > 0:
+                                xr[idx] -= sub
+                                delta += sub
+
+                if xr.sum() == total_sample:
+                    x_val = xr
+                    solver_used = s
+                    solution_found = True
+                    break
+        except Exception as e:
+            last_error = e
+
+    if not solution_found and fallback_relax_and_round:
+        try:
+            x_rel = cp.Variable(n)
+            prob_rel = cp.Problem(
+                cp.Minimize(cp.sum_squares(x_rel - target)),
+                [x_rel >= lb_int, x_rel <= ub_int, cp.sum(x_rel) == total_sample]
+            )
+            _ = prob_rel.solve(solver=cp.OSQP, warm_start=True, verbose=False)
+            xr = np.clip(np.rint(x_rel.value), lb_int, ub_int).astype(int)
+
+            # fix sum
+            delta = int(total_sample - xr.sum())
+            if delta != 0:
+                if delta > 0:
+                    room = (ub_int - xr)
+                    for idx in np.argsort(-room):
+                        if delta == 0: break
+                        add = min(delta, int(room[idx]))
+                        if add > 0:
+                            xr[idx] += add
+                            delta -= add
+                else:
+                    room = (xr - lb_int)
+                    for idx in np.argsort(-room):
+                        if delta == 0: break
+                        sub = min(-delta, int(room[idx]))
+                        if sub > 0:
+                            xr[idx] -= sub
+                            delta += sub
+
+            # ensure dimension mins (light-touch top-up inside capacity)
+            for dt, val_dict in dimension_mins.items():
+                for val, req_min in val_dict.items():
+                    if req_min > 0:
+                        idxs = dim_idx[dt].get(val, [])
+                        short = int(req_min - xr[idxs].sum())
+                        if short > 0:
+                            slack = (ub_int[idxs] - xr[idxs])
+                            for j in np.argsort(-slack):
+                                if short == 0: break
+                                jj = idxs[j]
+                                add = min(short, int(slack[j]))
+                                if add > 0:
+                                    xr[jj] += add
+                                    short -= add
+
+            if xr.sum() != total_sample:
+                raise RuntimeError("Rounding failed to hit total sample exactly.")
+
+            x_val = xr
+            solver_used = "RELAX+ROUND"
+            solution_found = True
         except Exception as e:
             last_error = e
 
     if not solution_found:
-        raise ValueError(f"No solver found a feasible solution among {chosen_solvers}. Last error was: {last_error}")
+        raise ValueError(f"No solver found a feasible solution (last error: {last_error})")
 
-    p_sol = np.round(p.value).astype(int)
-    f_sol = np.round(f.value).astype(int)
-    x_sol = p_sol + f_sol
-
+    # ---------- Feasible per-source split (never exceeds frame capacities) ----------
     out = df_long.copy()
-    out["OptimizedSample"] = x_sol
-    out["PanelAllocated"]  = p_sol
-    out["FreshAllocated"]  = f_sol
+    out["OptimizedSample"] = x_val.astype(int)
 
+    panel_cap = df_long["PanelPop"].to_numpy().astype(int)
+    fresh_cap = df_long["FreshPop"].to_numpy().astype(int)
+
+    if per_source_conv_caps:
+        panel_cap_eff = np.minimum(panel_cap, np.ceil(panel_cap * conversion_rate).astype(int))
+        fresh_cap_eff = np.minimum(fresh_cap, np.ceil(fresh_cap * conversion_rate).astype(int))
+    else:
+        panel_cap_eff = panel_cap
+        fresh_cap_eff = fresh_cap
+
+    x_arr = out["OptimizedSample"].to_numpy()
+    p_alloc = np.zeros_like(x_arr, dtype=int)
+    f_alloc = np.zeros_like(x_arr, dtype=int)
+
+    for i in range(len(x_arr)):
+        xi = int(x_arr[i])
+        pc = int(panel_cap_eff[i])
+        fc = int(fresh_cap_eff[i])
+
+        if xi <= 0 or (pc <= 0 and fc <= 0):
+            continue
+
+        # start with equal split
+        p = min(xi // 2, pc)
+        f = min(xi - p, fc)
+
+        # allocate remainder to the side with room (prefer fresh first)
+        rem = xi - (p + f)
+        if rem > 0:
+            f_take = min(rem, max(0, fc - f)); f += f_take; rem -= f_take
+        if rem > 0:
+            p_take = min(rem, max(0, pc - p)); p += p_take; rem -= p_take
+
+        # At this point, because xi <= pc+fc, rem should be 0
+        if rem > 0:
+            # Extremely defensive: this should never happen if ub_int respected Avail
+            raise ValueError(f"Split infeasible at i={i}: xi={xi}, panel_cap={pc}, fresh_cap={fc}")
+
+        p_alloc[i] = p
+        f_alloc[i] = f
+
+    out["PanelAllocated"] = p_alloc
+    out["FreshAllocated"] = f_alloc
+
+    # Sanity checks (feasible by construction)
+    if np.any(out["PanelAllocated"].to_numpy() > panel_cap_eff) or \
+       np.any(out["FreshAllocated"].to_numpy() > fresh_cap_eff) or \
+       np.any((out["PanelAllocated"] + out["FreshAllocated"]).to_numpy() != out["OptimizedSample"].to_numpy()):
+        raise ValueError("Internal allocation error: per-source caps violated or totals mismatch.")
+
+    # Base weights
     def basew(row):
         return (row["Population"] / row["OptimizedSample"]) if row["OptimizedSample"] > 0 else np.nan
     out["BaseWeight"] = out.apply(basew, axis=1)
 
-    return out, None, None, solver_that_succeeded
+    return out, None, None, solver_used
+
+
 
 ###############################################################################
 # 4) ALLOCATE BETWEEN PANEL & FRESH
@@ -1839,6 +2006,7 @@ def main():
 if __name__=="__main__":
     import cvxpy as cp
     main()
+
 
 
 
