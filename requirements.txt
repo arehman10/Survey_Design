@@ -5,4 +5,3 @@ cvxpy>=1.4.0
 openpyxl>=3.1.0
 swiglpk>=5.0.0
 matplotlib>=3.7.0
-utils
