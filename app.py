@@ -1,18 +1,4 @@
-"""
-WBES Survey Design Studio — Streamlit edition
-- Real MIP solver (cvxpy: SCIP -> ECOS_BB -> relax+round), as in the original solver app
-- Ingests the production workbook DIRECTLY (Inputs/Optimization layout with titled blocks),
-  or clean wide sheets (universe / frame_* / used_* / completed_* / previous_design_*)
-- Auto-reads the parameter block (sample size, min/max cell, max base weight, conversion,
-  same-source & de-duped toggles) from the workbook when present
-- The Optimization page mirrors the Excel sheet band-for-band:
-    FULL SAMPLE DESIGN | BASE WEIGHTS
-    MINIMUM CELL SIZE  | MAXIMUM CELL SIZE
-    FRESH SAMPLE DESIGN| PANEL SAMPLE DESIGN
-    IF ANY IN RED — RE-RUNNING THE SOLVER IS REQUIRED (fresh | panel)
 
-Run:  streamlit run wbes_design_studio.py
-"""
 import io, json, math, re
 import numpy as np
 import pandas as pd
@@ -20,6 +6,12 @@ import streamlit as st
 import cvxpy as cp
 
 IDC = None  # set after model load
+
+# Streamlit >=1.46 replaced use_container_width with width="stretch"; support both.
+def _v(ver):
+    return tuple(int(x) for x in re.findall(r"\d+", ver)[:2])
+FULLW = {"width": "stretch"} if _v(st.__version__) >= (1, 46) else {"use_container_width": True}
+
 
 # ============================================================================
 # PARSING — native workbook layout (titled blocks, left/right pairs)
@@ -465,13 +457,13 @@ def mini_caption(df, col):
 
 def show_plain(df, col, dec=0, height=460):
     st.dataframe(pivot(df, col, dec).style.format(f"{{:,.{dec}f}}", na_rep="–"),
-                 use_container_width=True, height=height)
+                 **FULLW, height=height)
 
 def show_heat(df, col, dec=0, height=460):
     pv = pivot(df, col, dec, totals_row=False)
     st.dataframe(pv.style.format(f"{{:,.{dec}f}}", na_rep="–")
                  .background_gradient(cmap="RdYlGn_r", axis=None),
-                 use_container_width=True, height=height)
+                 **FULLW, height=height)
 
 def show_red(df, valcol, needcol, height=460):
     pv = pivot(df, valcol, totals_row=False)
@@ -482,14 +474,14 @@ def show_red(df, valcol, needcol, height=460):
         out[mask] = "background-color:#F4B4AE;color:#7A150F;font-weight:700"
         return out
     st.dataframe(pv.style.format("{:,.0f}", na_rep="–").apply(styler, axis=None),
-                 use_container_width=True, height=height)
+                 **FULLW, height=height)
 
 def show_flag_pos(df, col, height=460):
     pv = pivot(df, col)
     def f(v):
         if pd.isna(v): return ""
         return "background-color:#F4B4AE;color:#7A150F;font-weight:700" if v > 0 else "color:#B9C4CF"
-    st.dataframe(pv.style.format("{:,.0f}", na_rep="–").map(f), use_container_width=True, height=height)
+    st.dataframe(pv.style.format("{:,.0f}", na_rep="–").map(f), **FULLW, height=height)
 
 def to_excel(model, P, mins, res):
     out = io.BytesIO()
@@ -554,7 +546,7 @@ def apply_file_params(fp):
 with st.sidebar:
     st.markdown("### Data")
     up = st.file_uploader("Excel workbook", type=["xlsx", "xls"], label_visibility="collapsed")
-    if st.button("Load demo (Sri Lanka)", use_container_width=True):
+    if st.button("Load demo (Sri Lanka)", **FULLW):
         st.session_state.model = load_demo(); st.session_state.res = None
         apply_file_params(st.session_state.model["file_params"]); st.rerun()
     if up is not None and st.session_state.get("_upname") != up.name:
@@ -624,7 +616,7 @@ if st.session_state.get("_mins_sig") != sig:
     st.session_state.mins = dict(default_mins); st.session_state._mins_sig = sig
 
 hd1, hd2, hd3 = st.columns([1.2, 2.5, 3])
-run = hd1.button("▶ Run solver", type="primary", use_container_width=True)
+run = hd1.button("▶ Run solver", type="primary", **FULLW)
 mode_txt = ("re-design — fieldwork accounted for" if (model["has"]["completed"] and not ignore_field)
             else "fresh design")
 hd2.caption(f"Mode: **{mode_txt}** · solver **{P['solver']}**")
@@ -683,7 +675,9 @@ with tab_in:
         sums = {}
         for (d_, _), m_ in st.session_state.mins.items(): sums[d_] = sums.get(d_, 0) + m_
         bad = [f"{d_} (Σ={s_})" for d_, s_ in sums.items() if s_ > P["total"]]
-        st.error("Minimums exceed the sample size within: " + ", ".join(bad)) if bad else \
+        if bad:
+            st.error("Minimums exceed the sample size within: " + ", ".join(bad))
+        else:
             st.success("All dimension minimums fit within the sample size.")
 
 # ---------------- OPTIMIZATION (mirrors the Optimization sheet) ----------------
@@ -770,7 +764,7 @@ with tab_rev:
             st.dataframe(res["df"].iloc[c["cells"]][IDC + ["Sector", "pop", "fF", "fP", "lb_tot", "ub_tot"]],
                          hide_index=True)
         st.subheader("Minimal relaxation needed (slack LP)")
-        st.dataframe(res["slack"], hide_index=True, use_container_width=True)
+        st.dataframe(res["slack"], hide_index=True, **FULLW)
         st.markdown("**Repair guidance:** lower the sample size or raise the conversion rate if capacity is short; "
                     "raise the max base weight or lower the min cell size for cell conflicts; "
                     "relax the listed dimension minimums otherwise.")
@@ -783,13 +777,13 @@ with tab_rev:
             got = int(d.loc[col.astype(str) == str(val), "x"].sum())
             rows.append({"Dimension": dim, "Value": val, "Min": mreq, "Allocated": got,
                          "Status": "met" if got >= mreq else f"short {mreq - got}"})
-        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+        st.dataframe(pd.DataFrame(rows), hide_index=True, **FULLW)
         st.subheader("Deviation from proportional (allocated − target)")
         d2 = d.copy(); d2["dev"] = d2["x"] - d2["t"]
         st.dataframe(pivot(d2, "dev", dec=1).style.format("{:,.1f}", na_rep="–")
                      .background_gradient(cmap="PuOr", axis=None, vmin=-float(np.abs(d2['dev']).max() or 1),
                                           vmax=float(np.abs(d2['dev']).max() or 1)),
-                     use_container_width=True, height=455)
+                     **FULLW, height=455)
         st.metric("Sum of squared deviations", f"{float(((d['x'] - d['t']) ** 2).sum()):,.1f}")
 
 # ---------------- EXPORT ----------------
