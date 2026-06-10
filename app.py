@@ -42,6 +42,8 @@ def _cellstr(v):
 def _read_block(grid, r0, c0):
     """Read one titled block: title at (r0,c0); header at r0+1 (c0 blank, c0+1='size', sectors...);
        data rows until region col empty. Returns (sectors, rows[(region,size,values)])."""
+    if r0 + 1 >= len(grid):
+        return None
     hdr = grid[r0 + 1]
     sectors = []
     c = c0 + 2
@@ -59,19 +61,17 @@ def _read_block(grid, r0, c0):
         for k in range(len(sectors)):
             v = grid[r][c0 + 2 + k] if c0 + 2 + k < len(grid[r]) else None
             try:
-                fv = float(v) if v not in (None, "") else 0.0
+                fv = float(str(v).replace(",", "").replace("%", "")) if v not in (None, "") else 0.0
                 vals.append(0.0 if math.isnan(fv) else fv)
             except (TypeError, ValueError):
                 vals.append(0.0)
         rows.append((region, size, vals)); r += 1
     return (sectors, rows) if rows else None
 
-def parse_native(xls: dict):
-    """Scan sheets for titled blocks + the parameter block. Sheets are ranked by how many
-       distinct patterns they contain, so template/README sheets can't hijack the parse."""
+def _scan_grids(named_grids: dict):
+    """Scan {name: grid} for titled blocks + parameters with sheet ranking."""
     sheet_blocks, sheet_params = {}, {}
-    for name, df in xls.items():
-        grid = df.where(pd.notna(df), None).values.tolist()
+    for name, grid in named_grids.items():
         blocks, params = {}, {}
         for r, row in enumerate(grid):
             for c, v in enumerate(row):
@@ -94,24 +94,24 @@ def parse_native(xls: dict):
             sheet_blocks[name] = blocks
         if params:
             sheet_params[name] = params
+    return sheet_blocks, sheet_params
+
+def _assemble_model(sheet_blocks, sheet_params, sheet_names):
     if not sheet_blocks:
         return None
-    # rank sheets: most distinct blocks; tie-break by name (Inputs > other > README/template-ish)
-    # and by position (later sheets beat leading template copies like 'All Turkey')
-    sheet_pos = {n: i for i, n in enumerate(xls)}
+    sheet_pos = {n: i for i, n in enumerate(sheet_names)}
     def _prio(n):
         ln = n.lower()
         if "input" in ln: return 3
         if re.search(r"read\s*me|template|^all\s", ln): return 0
         return 1
-    order = sorted(sheet_blocks, key=lambda n: (-len(sheet_blocks[n]), -_prio(n), -sheet_pos[n]))
+    order = sorted(sheet_blocks, key=lambda n: (-len(sheet_blocks[n]), -_prio(n), -sheet_pos.get(n, 0)))
     blocks = {}
     for name in order:
         for key, blk in sheet_blocks[name].items():
             blocks.setdefault(key, blk)
     if "fF" not in blocks or "fP" not in blocks or not ({"uni", "adj"} & set(blocks)):
         return None
-    # rank param sheets: must have sample size; prefer most parameters (the Optimization sheet wins)
     params = {}
     porder = sorted(sheet_params, key=lambda n: (-int("total" in sheet_params[n]), -len(sheet_params[n])))
     for name in porder:
@@ -150,6 +150,22 @@ def parse_native(xls: dict):
             "has": {"adj_sheet": "adj" in blocks, "used": "uF" in blocks or "uP" in blocks,
                     "completed": "cF" in blocks or "cP" in blocks,
                     "prev": "pF" in blocks or "pP" in blocks}}
+
+def parse_native(xls: dict):
+    grids = {name: df.where(pd.notna(df), None).values.tolist() for name, df in xls.items()}
+    sb, sp = _scan_grids(grids)
+    return _assemble_model(sb, sp, list(xls))
+
+def parse_pasted(text: str):
+    """Parse blocks pasted straight from Excel (tab-separated, like copying the Inputs region)."""
+    grid = [line.split("\t") for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n")]
+    width = max((len(r) for r in grid), default=0)
+    grid = [r + [None] * (width - len(r)) for r in grid]
+    sb, sp = _scan_grids({"pasted": grid})
+    m = _assemble_model(sb, sp, ["pasted"])
+    if m:
+        m["found"] = {"pasted": True}
+    return m
 
 # ----------------------------------------------------------------------------
 # Clean wide-sheet fallback (one table per sheet)
@@ -405,7 +421,29 @@ def run_solver(model, P, mins, ignore_fieldwork=False):
                 "slack": slack_diagnostic(t_add, lb_add, ub_add, R, g_add, df, idc)}
 
     t_add = np.maximum(0, df["t"].values - df["ach"].values)
-    add, solver, sn = solve_allocation(t_add, lb_add, ub_add, R, g_add, P["solver"], P["time_limit"])
+    for g in g_add:
+        if g["min"] > R:
+            notes.append(f'{g["label"]}: remaining minimum {g["min"]} exceeds the outstanding total {R} — clipped.')
+            g["min"] = R
+    g_add = [g for g in g_add if g["min"] > 0]
+    def _fail():
+        return {"ok": False, "conflicts": {"overall": [("Frame + minimums vs outstanding total",
+                                                        int(P["total"]), achieved + int(ub_add.sum()))],
+                                           "cells": [], "dims": []},
+                "df": df, "use_field": use_field,
+                "slack": slack_diagnostic(t_add, lb_add, ub_add, R, g_add, df, idc)}
+    try:
+        add, solver, sn = solve_allocation(t_add, lb_add, ub_add, R, g_add, P["solver"], P["time_limit"])
+    except ValueError:
+        if use_field and g_add:
+            notes.append("Remaining dimension minimums jointly exceed what can still be fielded — "
+                         "dropped for this run (see guidance).")
+            try:
+                add, solver, sn = solve_allocation(t_add, lb_add, ub_add, R, [], P["solver"], P["time_limit"])
+            except ValueError:
+                return _fail()
+        else:
+            return _fail()
     notes += sn
     df["add"] = add
     df["x"] = (df["ach"] + df["add"]).astype(int)            # FULL SAMPLE DESIGN (final)
@@ -424,6 +462,90 @@ def run_solver(model, P, mins, ignore_fieldwork=False):
         df["overP"] = (cP - df["pP"].fillna(0)).clip(lower=0).astype(int)
     return {"ok": True, "df": df, "groups": groups, "solver": solver, "notes": notes,
             "use_field": use_field, "achieved": achieved, "additional": int(df["add"].sum())}
+
+# ============================================================================
+# DESIGN GUIDANCE — which lever to move, and by how much
+# ============================================================================
+def design_guidance(res, P, mins):
+    msgs = []
+    d = res["df"]
+    if not res["ok"]:
+        cap = int(d["ub_tot"].sum())
+        for _, row in res["slack"].iterrows():
+            con, s = str(row["Constraint"]), row["Slack needed"]
+            try: s = float(s)
+            except (TypeError, ValueError): continue
+            if con == "Total sample":
+                conv_need = min(1.0, (P["total"] - int(d["ach"].sum())) / max(1.0, float(d["avail"].sum())))
+                msgs.append(f"🔻 **Lower the sample size to ≤ {P['total']-math.ceil(s):,}** — or expand capacity: "
+                            f"frames + conversion currently support ~{cap:,}; a conversion rate ≥ "
+                            f"{conv_need:.2f} would roughly close the gap.")
+            elif con.startswith("Cell min"):
+                msgs.append(f"🔻 **{con}**: its floor exceeds deliverable interviews by {s:.0f} — raise the max "
+                            f"base weight, lower the min cell size, or merge this stratum.")
+            else:
+                msgs.append(f"🔻 **Relax the minimum for {con}** by ~{math.ceil(s)} "
+                            f"(or widen its margin of error).")
+        return msgs or ["Infeasible, but the slack diagnostic found no single dominant constraint — "
+                        "lower the sample size as the safest first move."]
+    # ---- feasible: explain what pulls the design away from proportional, with target values ----
+    for nmsg in res.get("notes", []):
+        if any(k in nmsg for k in ("supports only", "exceeds", "dropped", "relaxed")):
+            msgs.append("⛔ " + nmsg)
+    x, t, ach, avail = d["x"].values, d["t"].values, d["ach"].values, d["avail"].values
+    pop = d["pop"].values
+    at_ub = (x >= d["ub_tot"].values) & (d["ub_tot"].values > ach) & (x < np.maximum(t, ach) - 0.5)
+    conv_room = np.ceil(avail * P["conv"])
+    ub_frame, ub_conv = ach + avail, ach + conv_room
+    ub_max = np.maximum(ach, P["max_cell"])
+    n_max = int((at_ub & (ub_max <= np.minimum(ub_frame, ub_conv) + 1e-9)).sum())
+    cells_conv = at_ub & (ub_conv < np.minimum(ub_frame, ub_max) - 1e-9)
+    n_conv, n_frame = int(cells_conv.sum()), int((at_ub & (ub_frame <= np.minimum(ub_conv, ub_max) + 1e-9)).sum())
+    if n_max:
+        need = int(math.ceil(np.max(t[at_ub & (ub_max <= np.minimum(ub_frame, ub_conv) + 1e-9)])))
+        msgs.append(f"🔺 **Max cell size ({P['max_cell']}) caps {n_max} cell(s)** below their proportional "
+                    f"share — raising it toward **{need}** lets the design follow the universe more closely.")
+    if n_conv:
+        need_conv = float(np.clip(np.max((t[cells_conv] - ach[cells_conv]) / np.maximum(1, avail[cells_conv])), 0, 1))
+        msgs.append(f"🔺 **The conversion rate ({P['conv']:.2f}) binds in {n_conv} cell(s)** — "
+                    f"~**{need_conv:.2f}** would free them (or top up listing there).")
+    if n_frame:
+        msgs.append(f"⛔ **Frame exhausted in {n_frame} cell(s)** — no parameter helps; only fresh listing "
+                    f"or accepting the shortfall in those strata.")
+    at_lb = (x <= d["lb_tot"].values) & (d["lb_tot"].values > ach) & (x > t + 0.5)
+    bw_floor = np.ceil(pop / P["max_bw"]) if P["max_bw"] > 0 else np.zeros_like(pop)
+    bw_cells = at_lb & (bw_floor >= P["min_cell"])
+    if bw_cells.any():
+        need_bw = int(math.ceil(np.max(pop[bw_cells] / np.maximum(1.0, t[bw_cells]))))
+        msgs.append(f"🔻 **The max base weight ({P['max_bw']:,.0f}) props up {int(bw_cells.sum())} large cell(s)** "
+                    f"above their proportional share — raising it to ≥ **{need_bw:,}** would relax the floor.")
+    mc_cells = at_lb & ~bw_cells
+    if mc_cells.any():
+        msgs.append(f"🔻 **The min cell size ({P['min_cell']}) boosts {int(mc_cells.sum())} tiny cell(s)** whose "
+                    f"proportional share is below it — lower it (or merge strata) to reduce design effects.")
+    for (dim, val), mreq in mins.items():
+        col = d["Sector"] if dim == "Sector" else d[dim]
+        members = col.astype(str) == str(val)
+        got = int(d.loc[members, "x"].sum())
+        prop = float(d.loc[members, "t"].sum())
+        if mreq > 0 and got <= mreq and got > prop + 1:
+            msgs.append(f"⚖️ **Minimum {dim} = {val} is binding**: it pulls the domain to {got} vs a "
+                        f"proportional {prop:.0f} (+{got-prop:.0f}) — relax it or accept the boost.")
+    if not msgs:
+        msgs.append("✅ No constraint is materially distorting the design — the allocation tracks the "
+                    "universe; remaining deviation is integer rounding.")
+    return msgs
+
+def top_deviations(res, idc, n=5):
+    d = res["df"].copy()
+    d["dev"] = d["x"] - d["t"]
+    d["cause"] = np.select(
+        [d["x"] >= d["ub_tot"], (d["x"] <= d["lb_tot"]) & (d["lb_tot"] > 0)],
+        ["at capacity (frame/conversion/max cell)", "at floor (min cell / base-weight / completed)"],
+        "interior")
+    top = d.reindex(d["dev"].abs().sort_values(ascending=False).index)[:n]
+    return top[idc + ["Sector", "t", "x", "dev", "cause"]].rename(
+        columns={"t": "Proportional", "x": "Design", "dev": "Deviation"}).round(1)
 
 # ============================================================================
 # PRESENTATION — Excel Optimization-sheet style
@@ -534,6 +656,7 @@ for k, v in DEFAULTS.items():
     st.session_state.setdefault(k, v)
 st.session_state.setdefault("same_lbl", "No"); st.session_state.setdefault("dedup_lbl", "Yes")
 st.session_state.setdefault("model", None); st.session_state.setdefault("res", None)
+st.session_state.setdefault("res_b", None)
 st.session_state.setdefault("mins", {})
 
 def apply_file_params(fp):
@@ -546,6 +669,18 @@ def apply_file_params(fp):
 with st.sidebar:
     st.markdown("### Data")
     up = st.file_uploader("Excel workbook", type=["xlsx", "xls"], label_visibility="collapsed")
+    with st.expander("…or paste blocks straight from Excel"):
+        st.caption("Select the Inputs region in Excel (titles + tables, any subset), copy, paste here.")
+        pasted = st.text_area("paste", height=140, label_visibility="collapsed",
+                              placeholder="ADJUSTED UNIVERSE\t…\n\tsize\tFood Products\t…")
+        if st.button("Parse pasted data"):
+            m = parse_pasted(pasted) if pasted.strip() else None
+            if m:
+                st.session_state.model = m; st.session_state.res = None; st.session_state.res_b = None
+                apply_file_params(m.get("file_params", {})); st.rerun()
+            else:
+                st.error("Could not find the blocks — include each table's TITLE row, the 'size' "
+                         "header row, and the data rows (tab-separated, as copied from Excel).")
     if st.button("Load demo (Sri Lanka)", **FULLW):
         st.session_state.model = load_demo(); st.session_state.res = None
         apply_file_params(st.session_state.model["file_params"]); st.rerun()
@@ -554,7 +689,8 @@ with st.sidebar:
         if "error" in m:
             st.error(m["error"])
         else:
-            st.session_state.model = m; st.session_state._upname = up.name; st.session_state.res = None
+            st.session_state.model = m; st.session_state._upname = up.name
+            st.session_state.res = None; st.session_state.res_b = None
             apply_file_params(m.get("file_params", {})); st.rerun()
     model = st.session_state.model
     if model:
@@ -584,6 +720,15 @@ with st.sidebar:
         pp = st.number_input("p", value=0.5, format="%.2f")
         basis = st.selectbox("Population basis", ["Adjusted (auto formula)", "Uploaded adjusted sheet", "External universe"])
         ignore_field = st.checkbox("Ignore fieldwork (design from scratch)", value=False)
+    with st.expander("Scenario B — compare an alternative"):
+        use_b = st.checkbox("Enable scenario B", value=False)
+        b_total = st.number_input("B: sample size", 1, 100000, int(st.session_state.total))
+        bc1, bc2 = st.columns(2)
+        b_min = bc1.number_input("B: min cell", 0, 1000, int(st.session_state.min_cell))
+        b_max = bc2.number_input("B: max cell", 1, 10000, int(st.session_state.max_cell))
+        b_bw = st.number_input("B: max base weight", 1, 100000, int(st.session_state.max_bw))
+        b_conv = st.number_input("B: conversion rate", 0.01, 1.0, float(st.session_state.conv), step=0.01)
+        st.caption("B shares the universe toggles, split rule and dimension minimums with A.")
 
 P = dict(total=int(st.session_state.total), min_cell=int(st.session_state.min_cell),
          max_cell=int(st.session_state.max_cell), max_bw=float(st.session_state.max_bw),
@@ -597,7 +742,7 @@ st.title("WBES Survey Design Studio")
 if not model:
     st.info("Upload your survey-design workbook from the sidebar — the **production layout** "
             "(Inputs sheet with titled blocks, like *Survey_Design_Sri_Lanka_2025*) is read directly, "
-            "parameters included. Clean one-table-per-sheet workbooks also work. Or load the demo.")
+            "parameters included — or just **paste the Inputs blocks** from Excel (sidebar). Clean one-table-per-sheet workbooks also work. Or load the demo.")
     st.stop()
 
 IDC = model["id_cols"]
@@ -623,12 +768,15 @@ hd2.caption(f"Mode: **{mode_txt}** · solver **{P['solver']}**")
 hd3.caption(f"n={P['total']} · cell {P['min_cell']}–{P['max_cell']} · max BW {P['max_bw']:,.0f} · "
             f"conv {P['conv']:.2f} · same source **{'Yes' if P['same'] else 'No'}** · de-duped **{'Yes' if P['dedup'] else 'No'}**")
 
+PB = dict(P, total=int(b_total), min_cell=int(b_min), max_cell=int(b_max),
+          max_bw=float(b_bw), conv=float(b_conv)) if use_b else None
 if run:
     with st.spinner(f"Solving MIP ({P['solver']})…"):
         st.session_state.res = run_solver(model, P, st.session_state.mins, ignore_field)
-res = st.session_state.res
+        st.session_state.res_b = run_solver(model, PB, st.session_state.mins, ignore_field) if use_b else None
+res, res_b = st.session_state.res, st.session_state.res_b
 
-tab_in, tab_opt, tab_rev, tab_exp = st.tabs(["Inputs", "Optimization", "Review", "Export"])
+tab_in, tab_opt, tab_cmp, tab_rev, tab_exp = st.tabs(["Inputs", "Optimization", "Compare A/B", "Review", "Export"])
 
 # ---------------- INPUTS (mirrors the Inputs sheet) ----------------
 with tab_in:
@@ -704,6 +852,11 @@ with tab_opt:
         m[5].metric("Solver", res["solver"])
         for nmsg in res["notes"]:
             st.warning(nmsg)
+        tips = design_guidance(res, P, st.session_state.mins)
+        with st.expander(f"🧭 Design guidance — where to move next ({len(tips)} pointer{'s' if len(tips)!=1 else ''})",
+                         expanded=any(t.startswith(("🔻","⛔")) for t in tips)):
+            for tmsg in tips:
+                st.markdown("- " + tmsg)
         h = 455
         cL, cR = st.columns(2)
         with cL:
@@ -747,11 +900,62 @@ with tab_opt:
                 cap_bar("PANEL: OVERSHOOT vs PREVIOUS DESIGN", "violet", "")
                 show_flag_pos(d, "overP", height=h)
 
+
+# ---------------- COMPARE A/B (the original app's scenario comparison) ----------------
+with tab_cmp:
+    if not (res and res.get("ok")):
+        st.info("Run the solver first.")
+    elif PB is None:
+        st.info("Enable **Scenario B** in the sidebar (set its sample size / bounds / weight cap / "
+                "conversion), then press **▶ Run solver** — both scenarios solve in one click and "
+                "this tab shows A, B and the cell-by-cell difference.")
+    elif not (res_b and res_b.get("ok")):
+        st.error("Scenario B is infeasible with its current parameters — its conflicts follow A's "
+                 "pattern; loosen B and re-run.")
+    else:
+        dA, dB = res["df"], res_b["df"]
+        mc = st.columns(5)
+        mc[0].metric("Sample A / B", f"{int(dA.x.sum()):,} / {int(dB.x.sum()):,}")
+        mc[1].metric("Max BW A / B", f"{dA.loc[dA.x>0,'bw'].max():,.0f} / {dB.loc[dB.x>0,'bw'].max():,.0f}")
+        mc[2].metric("Fresh A / B", f"{int(dA.fresh.sum()):,} / {int(dB.fresh.sum()):,}")
+        mc[3].metric("Panel A / B", f"{int(dA.panel.sum()):,} / {int(dB.panel.sum()):,}")
+        ssqA = float(((dA.x - dA.t) ** 2).sum()); ssqB = float(((dB.x - dB.t) ** 2).sum())
+        mc[4].metric("Σ sq. dev A / B", f"{ssqA:,.0f} / {ssqB:,.0f}")
+        st.caption(f"A: n={P['total']}, cell {P['min_cell']}–{P['max_cell']}, BW {P['max_bw']:,.0f}, "
+                   f"conv {P['conv']:.2f}  ·  B: n={PB['total']}, cell {PB['min_cell']}–{PB['max_cell']}, "
+                   f"BW {PB['max_bw']:,.0f}, conv {PB['conv']:.2f}")
+        h = 455
+        cL, cR = st.columns(2)
+        with cL:
+            cap_bar("SCENARIO A — FULL SAMPLE DESIGN", "green", "")
+            show_plain(dA, "x", height=h); mini_caption(dA, "x")
+        with cR:
+            cap_bar("SCENARIO B — FULL SAMPLE DESIGN", "green", "")
+            show_plain(dB, "x", height=h); mini_caption(dB, "x")
+        cap_bar("DIFFERENCE: A − B", "violet", "green = A allocates more · red = B allocates more")
+        diff = dA[IDC + ["Sector"]].copy(); diff["d"] = dA["x"].values - dB["x"].values
+        pv = pivot(diff, "d")
+        def _dstyle(v):
+            if pd.isna(v) or v == 0: return "color:#B9C4CF"
+            return ("background-color:#CDE8D2;color:#14532D;font-weight:600" if v > 0
+                    else "background-color:#F4B4AE;color:#7A150F;font-weight:600")
+        st.dataframe(pv.style.format("{:+,.0f}", na_rep="–").map(_dstyle), **FULLW, height=h)
+        cL, cR = st.columns(2)
+        with cL:
+            cap_bar("BASE WEIGHTS — A", "amber", "")
+            show_heat(dA, "bw", dec=1, height=h)
+        with cR:
+            cap_bar("BASE WEIGHTS — B", "amber", "")
+            show_heat(dB, "bw", dec=1, height=h)
+
 # ---------------- REVIEW ----------------
 with tab_rev:
     if not res:
         st.info("Run the solver first.")
     elif not res["ok"]:
+        st.subheader("🧭 How to make it feasible")
+        for tmsg in design_guidance(res, P, st.session_state.mins):
+            st.markdown("- " + tmsg)
         c = res["conflicts"]
         if c["overall"]:
             st.subheader("Overall conflicts")
@@ -770,6 +974,11 @@ with tab_rev:
                     "relax the listed dimension minimums otherwise.")
     else:
         d = res["df"]
+        st.subheader("🧭 Design guidance — where to move next")
+        for tmsg in design_guidance(res, P, st.session_state.mins):
+            st.markdown("- " + tmsg)
+        st.subheader("Largest deviations from proportional")
+        st.dataframe(top_deviations(res, IDC), hide_index=True, **FULLW)
         st.subheader("Dimension minimum checks")
         rows = []
         for (dim, val), mreq in st.session_state.mins.items():
